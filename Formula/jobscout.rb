@@ -7,8 +7,8 @@
 class Jobscout < Formula
   desc "Zero-dependency job posting scout that bundles new listings into digests"
   homepage "https://github.com/juniorinyang-spec/jobscout"
-  url "https://github.com/juniorinyang-spec/jobscout/archive/refs/tags/v0.1.3.tar.gz"
-  sha256 "1e9306be9042ec2b10af585fafb36982beb94cdc6b3a7638c295623342e42903"
+  url "https://github.com/juniorinyang-spec/jobscout/archive/refs/tags/v0.1.4.tar.gz"
+  sha256 "0a1fa56ed17d60f2298577b648df8ed188bd5919ec67a99327376a4f2059d328"
   license "MIT"
   head "https://github.com/juniorinyang-spec/jobscout.git", branch: "main"
 
