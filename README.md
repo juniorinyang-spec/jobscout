@@ -87,10 +87,18 @@ Useful flags: `--source NAME` (repeatable), `--remote`, `--limit N`, `--json`.
   tags, salary or summary (`rust` does not match `trust`).
 - `exclude` phrases drop a posting when present.
 - `companies` is easiest to manage with `jobscout company add`, which accepts
-  a company name (it probes each supported ATS for a matching board) or the
-  careers URL (exact: the hostname names the ATS). Supported systems:
-  Greenhouse, Lever, Ashby, Workable and SmartRecruiters. Companies on a
-  custom careers site without one of these are not supported yet.
+  a company name or a careers URL.
+  - **By name** (`stripe`, `public storage`): jobscout probes Greenhouse,
+    Lever, Ashby, Workable and SmartRecruiters for a matching board.
+  - **By URL**: a board URL on one of those systems is recognised from its
+    hostname. A URL on the company's own domain (`https://jobs.cvshealth.com/`)
+    is fetched and fingerprinted: Phenom-powered careers sites and Workday
+    boards (`<tenant>.wd<N>.myworkdayjobs.com/<site>`) are supported, and a
+    page that merely links to a Workday board is followed to it.
+  - Large catalogues (Phenom, Workday) are searched server-side with your
+    queries rather than downloaded whole.
+  - Sites behind bot protection (a Cloudflare "Just a moment" page, HTTP 403
+    for non-browsers) cannot be read; `company add` says so.
 
 ### Bundles
 

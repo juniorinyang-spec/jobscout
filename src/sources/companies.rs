@@ -1,9 +1,15 @@
-//! Company careers pages hosted on a known applicant tracking system (ATS).
-//! Each ATS exposes an unauthenticated JSON list of open roles keyed by a
-//! board slug, so tracking a company is one entry in `config.companies`.
+//! Company careers pages hosted on a known applicant tracking system (ATS)
+//! or careers-site platform. Each exposes a JSON list of open roles, so
+//! tracking a company is one entry in `config.companies`.
 //!
-//! `detect` turns what a user typed (a name or a careers URL) into a
-//! `Company` by reading the hostname or probing each ATS in turn.
+//! Two kinds of platform:
+//! - slug-addressed boards (Greenhouse, Lever, Ashby, Workable,
+//!   SmartRecruiters): a company name is enough, we probe each one;
+//! - site-addressed platforms (Phenom, Workday): the company's own careers
+//!   domain hosts a search API, so the user pastes the careers URL and we
+//!   fingerprint the page.
+//!
+//! `detect` turns what a user typed into a `Company` either way.
 
 use super::{looks_remote, Source};
 use crate::config::{Company, Config};
@@ -11,8 +17,20 @@ use crate::html;
 use crate::http;
 use crate::json::Json;
 use crate::model::Job;
+use crate::time;
+use std::collections::HashSet;
 
-pub const ATS: [&str; 5] = ["greenhouse", "lever", "ashby", "workable", "smartrecruiters"];
+/// Boards that can be probed from a bare company name.
+pub const SLUG_ATS: [&str; 5] = ["greenhouse", "lever", "ashby", "workable", "smartrecruiters"];
+/// Platforms that live on the company's own careers domain.
+pub const SITE_ATS: [&str; 2] = ["phenom", "workday"];
+
+/// Result of reading a board: the postings fetched (possibly capped) and the
+/// board's own total, so `company add` can report the real size.
+pub struct Listing {
+    pub jobs: Vec<Job>,
+    pub total: usize,
+}
 
 pub struct Companies;
 
@@ -21,20 +39,31 @@ impl Source for Companies {
         "companies"
     }
     fn describe(&self) -> &'static str {
-        "companies you track (Greenhouse, Lever, Ashby, Workable, SmartRecruiters)"
+        "companies you track (Greenhouse, Lever, Ashby, Workable, SmartRecruiters, Phenom, Workday)"
     }
     fn unconfigured(&self, cfg: &Config) -> Option<&'static str> {
         cfg.companies.is_empty().then_some("no companies yet; try `jobscout company add <name or url>`")
     }
 
     fn fetch(&self, cfg: &Config) -> Result<Vec<Job>, String> {
-        let mut jobs = Vec::new();
+        let mut jobs: Vec<Job> = Vec::new();
         let mut errors = Vec::new();
+        // The same requisition can surface through two front ends of one
+        // company (e.g. a Phenom site and the Workday board behind it), so
+        // de-duplicate on company + requisition id.
+        let mut seen_req: HashSet<String> = HashSet::new();
         // The cap applies per company; a large employer must not crowd out
         // the others.
         for c in &cfg.companies {
-            match fetch_company(c, cfg.max_per_source) {
-                Ok(found) => jobs.extend(found),
+            match fetch_company(c, &cfg.queries, cfg.max_per_source) {
+                Ok(l) => {
+                    for j in l.jobs {
+                        let req = j.id.rsplit('/').next().unwrap_or(&j.id).to_lowercase();
+                        if seen_req.insert(format!("{}|{}", j.company.to_lowercase(), req)) {
+                            jobs.push(j);
+                        }
+                    }
+                }
                 Err(e) => errors.push(format!("{}: {}", c.name, e)),
             }
         }
@@ -48,14 +77,18 @@ impl Source for Companies {
     }
 }
 
-/// Fetch one company's open roles from its ATS.
-pub fn fetch_company(c: &Company, max: usize) -> Result<Vec<Job>, String> {
+/// Fetch one company's open roles. Slug boards return their whole list;
+/// site platforms (whose catalogues run to thousands) search server-side
+/// for each query, or the newest postings when there are no queries.
+pub fn fetch_company(c: &Company, queries: &[String], max: usize) -> Result<Listing, String> {
     match c.ats.as_str() {
         "greenhouse" => greenhouse(c, max),
         "lever" => lever(c, max),
         "ashby" => ashby(c, max),
         "workable" => workable(c, max),
         "smartrecruiters" => smartrecruiters(c, max),
+        "phenom" => phenom(c, queries, max),
+        "workday" => workday(c, queries, max),
         other => Err(format!("unknown ats '{}'", other)),
     }
 }
@@ -65,16 +98,15 @@ pub fn fetch_company(c: &Company, max: usize) -> Result<Vec<Job>, String> {
 pub fn detect(input: &str) -> Result<(Company, usize), String> {
     let input = input.trim();
     if let Some((ats, slug)) = from_url(input) {
-        let c = Company { name: slug.clone(), ats: ats.to_string(), slug };
-        let jobs = fetch_company(&c, 10_000).map_err(|e| format!("{} board '{}' did not answer: {}", ats, c.slug, e))?;
-        return Ok((c, jobs.len()));
+        let c = Company { name: display_name(&slug), ats: ats.to_string(), slug };
+        let l = fetch_company(&c, &[], 100).map_err(|e| format!("{} board '{}' did not answer: {}", ats, c.slug, e))?;
+        return Ok((c, l.total));
     }
-    if input.contains("://") || input.contains('/') {
-        return Err(format!(
-            "'{}' is not a careers URL on a supported ATS ({}). Paste the URL from the company's jobs page, or give the company name to probe.",
-            input,
-            ATS.join(", ")
-        ));
+    if input.contains("://") {
+        return detect_site(input);
+    }
+    if input.contains('/') {
+        return Err(format!("'{}' looks like a URL; include the https:// prefix", input));
     }
     let name = input.to_string();
     let mut slugs: Vec<String> = Vec::new();
@@ -85,21 +117,88 @@ pub fn detect(input: &str) -> Result<(Company, usize), String> {
     }
     // Some systems (SmartRecruiters) answer 200 with an empty list for
     // unknown slugs, so a probe only counts when it finds open roles.
-    for ats in ATS {
+    for ats in SLUG_ATS {
         for slug in &slugs {
             let c = Company { name: name.clone(), ats: ats.to_string(), slug: slug.clone() };
-            if let Ok(jobs) = fetch_company(&c, 10_000) {
-                if !jobs.is_empty() {
-                    return Ok((c, jobs.len()));
+            if let Ok(l) = fetch_company(&c, &[], 100) {
+                if l.total > 0 {
+                    return Ok((c, l.total));
                 }
             }
         }
     }
     Err(format!(
-        "no board found for '{}' on {}. If the company uses one of these, paste its careers URL instead.",
+        "no board found for '{}' on {}. If the company uses one of these or runs its careers site on Phenom or Workday, paste its careers URL instead.",
         input,
-        ATS.join(", ")
+        SLUG_ATS.join(", ")
     ))
+}
+
+/// A careers URL on the company's own domain: fetch the page and fingerprint
+/// the platform behind it.
+fn detect_site(url: &str) -> Result<(Company, usize), String> {
+    let host = host_of(url).ok_or_else(|| format!("'{}' is not a valid URL", url))?;
+    let page = http::get(url).map_err(|e| {
+        if e.contains("403") {
+            format!(
+                "{} refused automated access (HTTP 403). That is usually bot protection such as Cloudflare, which needs a real browser; jobscout cannot read this site.",
+                host
+            )
+        } else {
+            format!("could not fetch {}: {}", url, e)
+        }
+    })?;
+    let lower = page.to_lowercase();
+
+    if lower.contains("ddokey") || lower.contains("phenom") {
+        let c = Company { name: display_name(&host), ats: "phenom".into(), slug: host.clone() };
+        let l = fetch_company(&c, &[], 100).map_err(|e| format!("{} looks like a Phenom site but its search API did not answer: {}", host, e))?;
+        return Ok((c, l.total));
+    }
+    // A page that merely links to a Workday board: follow that instead.
+    if let Some(pos) = lower.find(".myworkdayjobs.com/") {
+        let start = lower[..pos].rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '.' || c == '-')).map(|i| i + 1).unwrap_or(0);
+        let tail: String = page[start..].chars().take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_' | '/')).collect();
+        if let Some((ats, slug)) = from_url(&format!("https://{}", tail)) {
+            let c = Company { name: display_name(&slug), ats: ats.into(), slug };
+            let l = fetch_company(&c, &[], 100).map_err(|e| format!("found a Workday board at {} but it did not answer: {}", c.slug, e))?;
+            return Ok((c, l.total));
+        }
+    }
+    let hint = if lower.contains("just a moment") || lower.contains("challenges.cloudflare.com") {
+        " The site answered with a bot-protection challenge, so it cannot be read without a browser."
+    } else {
+        ""
+    };
+    Err(format!(
+        "{} is not on a platform jobscout understands ({}, {}).{} Paste the URL of the job search page itself if this was a landing page.",
+        host,
+        SLUG_ATS.join(", "),
+        SITE_ATS.join(", "),
+        hint
+    ))
+}
+
+fn host_of(url: &str) -> Option<String> {
+    let rest = url.strip_prefix("https://").or_else(|| url.strip_prefix("http://"))?;
+    let host = rest.split(['/', '?', '#']).next()?.to_lowercase();
+    if host.is_empty() {
+        None
+    } else {
+        Some(host)
+    }
+}
+
+/// `jobs.cvshealth.com` -> `cvshealth`; `acme.wd1.myworkdayjobs.com/Careers` -> `acme`.
+fn display_name(slug: &str) -> String {
+    let host = slug.split('/').next().unwrap_or(slug);
+    if host.contains('.') {
+        let labels: Vec<&str> = host.split('.').collect();
+        let generic = ["jobs", "careers", "career", "www", "apply", "work", "join", "talent"];
+        labels.iter().find(|l| !generic.contains(&l.to_lowercase().as_str())).map(|s| s.to_string()).unwrap_or_else(|| host.to_string())
+    } else {
+        slug.to_string()
+    }
 }
 
 /// Recognise an ATS-hosted careers URL and pull the board slug out of it.
@@ -144,12 +243,30 @@ pub fn from_url(input: &str) -> Option<(&'static str, String)> {
         let slug = if segs.first() == Some(&"v1") { first(2) } else { first(0) }?;
         return Some(("smartrecruiters", slug));
     }
+    if host.ends_with(".myworkdayjobs.com") {
+        // <tenant>.wd<N>.myworkdayjobs.com/<site>, .../en-US/<site>/...,
+        // .../wday/cxs/<tenant>/<site>/jobs
+        let site = if segs.first() == Some(&"wday") {
+            first(3)
+        } else if segs.first().map(|s| is_locale(s)).unwrap_or(false) {
+            first(1)
+        } else {
+            first(0)
+        }?;
+        return Some(("workday", format!("{}/{}", host, site)));
+    }
     None
+}
+
+/// `en-US`, `fr-CA`, `de-DE`...
+fn is_locale(s: &str) -> bool {
+    let b = s.as_bytes();
+    b.len() == 5 && b[2] == b'-' && b[..2].iter().all(|c| c.is_ascii_lowercase()) && b[3..].iter().all(|c| c.is_ascii_uppercase())
 }
 
 // ------------------------------------------------------------- adapters
 
-fn greenhouse(c: &Company, max: usize) -> Result<Vec<Job>, String> {
+fn greenhouse(c: &Company, max: usize) -> Result<Listing, String> {
     let url = format!("https://boards-api.greenhouse.io/v1/boards/{}/jobs", http::url_encode(&c.slug));
     let root = Json::parse(&http::get(&url)?)?;
     let items = root.get("jobs").and_then(|j| j.as_arr()).ok_or("no jobs array")?;
@@ -178,10 +295,10 @@ fn greenhouse(c: &Company, max: usize) -> Result<Vec<Job>, String> {
             break;
         }
     }
-    Ok(jobs)
+    Ok(Listing { total: items.len(), jobs })
 }
 
-fn lever(c: &Company, max: usize) -> Result<Vec<Job>, String> {
+fn lever(c: &Company, max: usize) -> Result<Listing, String> {
     let url = format!("https://api.lever.co/v0/postings/{}?mode=json", http::url_encode(&c.slug));
     let root = Json::parse(&http::get(&url)?)?;
     let items = root.as_arr().ok_or("expected a JSON array")?;
@@ -219,10 +336,10 @@ fn lever(c: &Company, max: usize) -> Result<Vec<Job>, String> {
             break;
         }
     }
-    Ok(jobs)
+    Ok(Listing { total: items.len(), jobs })
 }
 
-fn ashby(c: &Company, max: usize) -> Result<Vec<Job>, String> {
+fn ashby(c: &Company, max: usize) -> Result<Listing, String> {
     let url = format!("https://api.ashbyhq.com/posting-api/job-board/{}?includeCompensation=true", http::url_encode(&c.slug));
     let root = Json::parse(&http::get(&url)?)?;
     let items = root.get("jobs").and_then(|j| j.as_arr()).ok_or("no jobs array")?;
@@ -255,10 +372,10 @@ fn ashby(c: &Company, max: usize) -> Result<Vec<Job>, String> {
             break;
         }
     }
-    Ok(jobs)
+    Ok(Listing { total: items.len(), jobs })
 }
 
-fn workable(c: &Company, max: usize) -> Result<Vec<Job>, String> {
+fn workable(c: &Company, max: usize) -> Result<Listing, String> {
     let url = format!("https://apply.workable.com/api/v1/widget/accounts/{}", http::url_encode(&c.slug));
     let root = Json::parse(&http::get(&url)?)?;
     let items = root.get("jobs").and_then(|j| j.as_arr()).ok_or("no jobs array")?;
@@ -295,16 +412,18 @@ fn workable(c: &Company, max: usize) -> Result<Vec<Job>, String> {
             break;
         }
     }
-    Ok(jobs)
+    Ok(Listing { total: items.len(), jobs })
 }
 
-fn smartrecruiters(c: &Company, max: usize) -> Result<Vec<Job>, String> {
+fn smartrecruiters(c: &Company, max: usize) -> Result<Listing, String> {
     let mut jobs = Vec::new();
     let mut offset = 0;
+    let mut total = 0;
     loop {
         let url = format!("https://api.smartrecruiters.com/v1/companies/{}/postings?limit=100&offset={}", http::url_encode(&c.slug), offset);
         let root = Json::parse(&http::get(&url)?)?;
         let items = root.get("content").and_then(|j| j.as_arr()).ok_or("no content array")?;
+        total = total.max(root.num_of("totalFound").unwrap_or(0.0) as usize);
         if items.is_empty() {
             break;
         }
@@ -330,16 +449,187 @@ fn smartrecruiters(c: &Company, max: usize) -> Result<Vec<Job>, String> {
             }
             jobs.push(j);
             if jobs.len() >= max {
-                return Ok(jobs);
+                return Ok(Listing { jobs, total });
             }
         }
         offset += items.len();
-        let total = root.num_of("totalFound").unwrap_or(0.0) as usize;
         if offset >= total || items.len() < 100 {
             break;
         }
     }
-    Ok(jobs)
+    Ok(Listing { jobs, total })
+}
+
+/// Phenom careers sites (jobs.<company>.com) expose the search their own
+/// page uses: POST /widgets with `ddoKey: refineSearch`.
+fn phenom(c: &Company, queries: &[String], max: usize) -> Result<Listing, String> {
+    let url = format!("https://{}/widgets", c.slug);
+    let searches: Vec<String> = if queries.is_empty() { vec![String::new()] } else { queries.to_vec() };
+    let mut jobs = Vec::new();
+    let mut seen = HashSet::new();
+    let mut total = 0;
+    for q in &searches {
+        let mut from = 0;
+        loop {
+            let size = 100.min(max.saturating_sub(jobs.len()).max(1));
+            let mut body = Json::obj();
+            body.set("lang", Json::Str("en_us".into()));
+            body.set("deviceType", Json::Str("desktop".into()));
+            body.set("country", Json::Str("us".into()));
+            body.set("pageName", Json::Str("search-results".into()));
+            body.set("ddoKey", Json::Str("refineSearch".into()));
+            body.set("sortBy", Json::Str("Most recent".into()));
+            body.set("subsearch", Json::Str(String::new()));
+            body.set("from", Json::Num(from as f64));
+            body.set("jobs", Json::Bool(true));
+            body.set("counts", Json::Bool(false));
+            body.set("all_fields", Json::Arr(vec![]));
+            body.set("size", Json::Num(size as f64));
+            body.set("clearAll", Json::Bool(false));
+            body.set("jdsource", Json::Str("facets".into()));
+            body.set("isSliderEnable", Json::Bool(false));
+            body.set("pageId", Json::Str("page12".into()));
+            body.set("siteType", Json::Str("external".into()));
+            body.set("keywords", Json::Str(q.clone()));
+            body.set("global", Json::Bool(true));
+            body.set("selected_fields", Json::obj());
+            body.set("locationData", Json::obj());
+
+            let root = Json::parse(&http::post_json(&url, &body.to_compact())?)?;
+            let rs = root.get("refineSearch").ok_or("no refineSearch in response")?;
+            let hits = rs.num_of("totalHits").unwrap_or(0.0) as usize;
+            if queries.is_empty() {
+                total = hits;
+            } else {
+                total += hits;
+            }
+            let items = rs.path(&["data", "jobs"]).and_then(|j| j.as_arr()).ok_or("no jobs in response")?;
+            if items.is_empty() {
+                break;
+            }
+            for it in items {
+                let mut id = it.str_of("jobId");
+                if id.is_empty() {
+                    id = it.str_of("reqId");
+                }
+                if id.is_empty() || !seen.insert(id.clone()) {
+                    continue;
+                }
+                let mut j = Job::new("phenom", format!("{}/{}", c.slug, id));
+                j.title = it.str_of("title");
+                j.company = c.name.clone();
+                j.location = it.str_of("cityState");
+                if j.location.is_empty() {
+                    j.location = it.str_of("cityStateCountry");
+                }
+                if it.bool_of("isMultiLocation") == Some(true) {
+                    let n = it.get("multi_location_array").and_then(|a| a.as_arr()).map(|a| a.len()).unwrap_or(0);
+                    if n > 1 {
+                        j.location = format!("{} (+{} more)", j.location, n - 1);
+                    }
+                }
+                let remote = it.str_of("remote");
+                j.remote = remote.to_lowercase() == "remote" || looks_remote(&j.location) || looks_remote(&j.title);
+                // applyUrl usually points at the underlying ATS job page with
+                // an `/apply` suffix; link to the page itself.
+                j.url = it.str_of("applyUrl").trim_end_matches('/').trim_end_matches("/apply").to_string();
+                if j.url.is_empty() {
+                    j.url = format!("https://{}/job/{}", c.slug, it.str_of("jobSeqNo"));
+                }
+                j.set_posted_iso(&it.str_of("postedDate"));
+                for v in [it.str_of("category"), it.str_of("type"), remote] {
+                    if !v.is_empty() {
+                        j.tags.push(v);
+                    }
+                }
+                j.summary = html::truncate(&html::text(&it.str_of("descriptionTeaser")), 240);
+                jobs.push(j);
+                if jobs.len() >= max {
+                    return Ok(Listing { jobs, total });
+                }
+            }
+            from += items.len();
+            if from >= hits || queries.is_empty() {
+                break;
+            }
+        }
+    }
+    Ok(Listing { jobs, total })
+}
+
+/// Workday boards: POST /wday/cxs/<tenant>/<site>/jobs, 20 per page.
+fn workday(c: &Company, queries: &[String], max: usize) -> Result<Listing, String> {
+    let (host, site) = c.slug.split_once('/').ok_or("workday slug must be host/site")?;
+    let tenant = host.split('.').next().unwrap_or(host);
+    let url = format!("https://{}/wday/cxs/{}/{}/jobs", host, tenant, site);
+    let searches: Vec<String> = if queries.is_empty() { vec![String::new()] } else { queries.to_vec() };
+    let now = time::now_unix();
+    let mut jobs = Vec::new();
+    let mut seen = HashSet::new();
+    let mut total = 0;
+    for q in &searches {
+        let mut offset = 0;
+        loop {
+            let mut body = Json::obj();
+            body.set("appliedFacets", Json::obj());
+            body.set("limit", Json::Num(20.0));
+            body.set("offset", Json::Num(offset as f64));
+            body.set("searchText", Json::Str(q.clone()));
+            let root = Json::parse(&http::post_json(&url, &body.to_compact())?)?;
+            let found = root.num_of("total").unwrap_or(0.0) as usize;
+            if queries.is_empty() {
+                total = found;
+            } else {
+                total += found;
+            }
+            let items = root.get("jobPostings").and_then(|j| j.as_arr()).ok_or("no jobPostings in response")?;
+            if items.is_empty() {
+                break;
+            }
+            for it in items {
+                let path = it.str_of("externalPath");
+                let id = path.rsplit('_').next().filter(|s| !s.is_empty() && !path.is_empty()).map(|s| s.to_string()).unwrap_or_else(|| path.clone());
+                if id.is_empty() || !seen.insert(id.clone()) {
+                    continue;
+                }
+                let mut j = Job::new("workday", format!("{}/{}", c.slug, id));
+                j.title = it.str_of("title");
+                j.company = c.name.clone();
+                j.location = it.str_of("locationsText");
+                j.remote = looks_remote(&j.location) || looks_remote(&j.title);
+                j.url = format!("https://{}/en-US/{}{}", host, site, path);
+                if let Some(days) = workday_age_days(&it.str_of("postedOn")) {
+                    j.set_posted_unix(now - days * 86_400);
+                }
+                let kind = it.str_of("timeType");
+                if !kind.is_empty() {
+                    j.tags.push(kind);
+                }
+                jobs.push(j);
+                if jobs.len() >= max {
+                    return Ok(Listing { jobs, total });
+                }
+            }
+            offset += items.len();
+            if offset >= found || queries.is_empty() {
+                break;
+            }
+        }
+    }
+    Ok(Listing { jobs, total })
+}
+
+/// "Posted Today" / "Posted Yesterday" / "Posted 3 Days Ago" / "Posted 30+ Days Ago"
+fn workday_age_days(s: &str) -> Option<i64> {
+    let l = s.to_lowercase();
+    if l.contains("today") {
+        return Some(0);
+    }
+    if l.contains("yesterday") {
+        return Some(1);
+    }
+    let digits: String = l.chars().filter(|c| c.is_ascii_digit()).collect();
+    digits.parse::<i64>().ok()
 }
 
 #[cfg(test)]
@@ -356,7 +646,23 @@ mod tests {
         assert_eq!(from_url("https://apply.workable.com/acme/"), Some(("workable", "acme".into())));
         assert_eq!(from_url("https://acme.workable.com"), Some(("workable", "acme".into())));
         assert_eq!(from_url("https://careers.smartrecruiters.com/Bosch"), Some(("smartrecruiters", "Bosch".into())));
+        assert_eq!(
+            from_url("https://cvshealth.wd1.myworkdayjobs.com/en-US/CVS_Health_Careers/job/x"),
+            Some(("workday", "cvshealth.wd1.myworkdayjobs.com/CVS_Health_Careers".into()))
+        );
+        assert_eq!(from_url("https://acme.wd5.myworkdayjobs.com/External"), Some(("workday", "acme.wd5.myworkdayjobs.com/External".into())));
         assert_eq!(from_url("https://example.com/careers"), None);
         assert_eq!(from_url("stripe"), None);
+    }
+
+    #[test]
+    fn names_and_ages() {
+        assert_eq!(display_name("jobs.cvshealth.com"), "cvshealth");
+        assert_eq!(display_name("cvshealth.wd1.myworkdayjobs.com/CVS_Health_Careers"), "cvshealth");
+        assert_eq!(display_name("stripe"), "stripe");
+        assert_eq!(workday_age_days("Posted Today"), Some(0));
+        assert_eq!(workday_age_days("Posted 30+ Days Ago"), Some(30));
+        assert_eq!(workday_age_days("Posted 2 Days Ago"), Some(2));
+        assert_eq!(workday_age_days(""), None);
     }
 }

@@ -16,26 +16,35 @@ pub fn curl_available() -> bool {
 
 /// GET `url` and return the response body as text.
 pub fn get(url: &str) -> Result<String, String> {
-    let out = Command::new("curl")
-        .args([
-            "--silent",
-            "--show-error",
-            "--location",
-            "--fail",
-            "--compressed",
-            "--max-time",
-            "45",
-            "--retry",
-            "1",
-            "--user-agent",
-            USER_AGENT,
-            "--header",
-            "Accept: application/json, application/rss+xml, application/xml, text/html;q=0.9, */*;q=0.8",
-            "--",
-            url,
-        ])
-        .output()
-        .map_err(|e| format!("could not run curl: {}", e))?;
+    run_curl(url, None)
+}
+
+/// POST a JSON body to `url` and return the response body as text.
+pub fn post_json(url: &str, body: &str) -> Result<String, String> {
+    run_curl(url, Some(body))
+}
+
+fn run_curl(url: &str, json_body: Option<&str>) -> Result<String, String> {
+    let mut cmd = Command::new("curl");
+    cmd.args([
+        "--silent",
+        "--show-error",
+        "--location",
+        "--fail",
+        "--compressed",
+        "--max-time",
+        "45",
+        "--retry",
+        "1",
+        "--user-agent",
+        USER_AGENT,
+        "--header",
+        "Accept: application/json, application/rss+xml, application/xml, text/html;q=0.9, */*;q=0.8",
+    ]);
+    if let Some(body) = json_body {
+        cmd.args(["--header", "Content-Type: application/json", "--data-binary", body]);
+    }
+    let out = cmd.args(["--", url]).output().map_err(|e| format!("could not run curl: {}", e))?;
 
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
