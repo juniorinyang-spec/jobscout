@@ -136,23 +136,45 @@ pub fn detect(input: &str) -> Result<(Company, usize), String> {
         let l = fetch_company(&c, &[], 100).map_err(|e| format!("{} careers site did not answer: {}", name, e))?;
         return Ok((c, l.total));
     }
-    let mut slugs: Vec<String> = Vec::new();
-    for s in [input.to_lowercase().replace(' ', ""), input.to_lowercase().replace(' ', "-")] {
-        if !slugs.contains(&s) {
-            slugs.push(s);
-        }
-    }
-    // Some systems (SmartRecruiters) answer 200 with an empty list for
-    // unknown slugs, so a probe only counts when it finds open roles.
-    for ats in SLUG_ATS {
-        for slug in &slugs {
-            let c = Company { name: name.clone(), ats: ats.to_string(), slug: slug.clone() };
-            if let Ok(l) = fetch_company(&c, &[], 100) {
-                if l.total > 0 {
-                    return Ok((c, l.total));
+    // Probe every board system with the usual slug spellings in parallel,
+    // and keep the board with the most open roles: a stale or unrelated
+    // board with the same name (Ramp's 1-role Greenhouse board vs its real
+    // Ashby board) must not win just because it was probed first. Some
+    // systems (SmartRecruiters) answer 200 with an empty list for unknown
+    // slugs, so a probe only counts when it finds open roles.
+    let probes: Vec<(usize, Company)> = SLUG_ATS
+        .iter()
+        .flat_map(|ats| slug_variants(input, ats).into_iter().map(move |slug| (ats, slug)))
+        .map(|(ats, slug)| Company { name: name.clone(), ats: ats.to_string(), slug })
+        .enumerate()
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<Vec<_>>();
+    // (probe order, company, roles): most roles wins; on a tie the earlier,
+    // plainer spelling wins, so the result does not depend on timing.
+    let best: std::sync::Mutex<Option<(usize, Company, usize)>> = std::sync::Mutex::new(None);
+    let queue = std::sync::Mutex::new(probes);
+    std::thread::scope(|s| {
+        for _ in 0..8 {
+            s.spawn(|| loop {
+                let next = queue.lock().unwrap().pop();
+                let Some((order, c)) = next else { break };
+                if let Ok(l) = fetch_company(&c, &[], 100) {
+                    let mut b = best.lock().unwrap();
+                    let better = match b.as_ref() {
+                        None => true,
+                        Some((o, _, n)) => l.total > *n || (l.total == *n && order < *o),
+                    };
+                    if l.total > 0 && better {
+                        *b = Some((order, c, l.total));
+                    }
                 }
-            }
+            });
         }
+    });
+    if let Some((_, c, n)) = best.into_inner().unwrap() {
+        return Ok((c, n));
     }
     Err(format!(
         "no board found for '{}' on {}. If the company uses one of these or runs its careers site on Phenom or Workday, paste its careers URL instead.",
@@ -228,6 +250,34 @@ fn host_of(url: &str) -> Option<String> {
     } else {
         Some(host)
     }
+}
+
+/// Board slugs to try for a company name: the name squashed and hyphenated,
+/// plus the suffixes companies commonly add when the plain name was taken
+/// (doordashusa, hubspotjobs, kraken.com, Ubisoft2).
+fn slug_variants(name: &str, ats: &str) -> Vec<String> {
+    let lower = name.trim().to_lowercase();
+    let squashed: String = lower.chars().filter(|c| c.is_alphanumeric() || *c == '.').collect();
+    let hyphen = lower.split_whitespace().collect::<Vec<_>>().join("-");
+    let mut out: Vec<String> = Vec::new();
+    let mut push = |s: String| {
+        if !s.is_empty() && !out.contains(&s) {
+            out.push(s);
+        }
+    };
+    push(squashed.clone());
+    push(hyphen.clone());
+    for suffix in ["usa", "us", "jobs", "careers", "hq", "inc", ".com", "2", "global", "team"] {
+        push(format!("{}{}", squashed, suffix));
+    }
+    if ats == "smartrecruiters" {
+        // SmartRecruiters slugs are often capitalised (Ubisoft2, BoschGroup).
+        let cap: String = squashed.chars().take(1).flat_map(|c| c.to_uppercase()).chain(squashed.chars().skip(1)).collect();
+        push(cap.clone());
+        push(format!("{}2", cap));
+        push(squashed.to_uppercase());
+    }
+    out
 }
 
 /// `jobs.cvshealth.com` -> `cvshealth`; `explore.jobs.netflix.net` ->
@@ -800,6 +850,16 @@ fn workday_age_days(s: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn slug_guesses() {
+        let v = slug_variants("DoorDash", "greenhouse");
+        assert!(v.contains(&"doordash".to_string()) && v.contains(&"doordashusa".to_string()));
+        assert!(slug_variants("Public Storage", "lever").contains(&"public-storage".to_string()));
+        assert!(slug_variants("Kraken", "ashby").contains(&"kraken.com".to_string()));
+        assert!(slug_variants("ubisoft", "smartrecruiters").contains(&"Ubisoft2".to_string()));
+        assert!(!slug_variants("ubisoft", "greenhouse").contains(&"Ubisoft2".to_string()));
+    }
 
     #[test]
     fn display_names() {
