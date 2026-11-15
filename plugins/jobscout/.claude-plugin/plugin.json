@@ -1,0 +1,14 @@
+{
+  "name": "jobscout",
+  "displayName": "jobscout",
+  "version": "0.1.9",
+  "description": "Find new job postings at the companies you choose (Greenhouse, Lever, Ashby, Workday, Phenom, TikTok and any careers site with schema.org job data), filtered by keywords, location and date.",
+  "author": {
+    "name": "juniorinyang-spec",
+    "url": "https://github.com/juniorinyang-spec"
+  },
+  "homepage": "https://github.com/juniorinyang-spec/jobscout",
+  "repository": "https://github.com/juniorinyang-spec/jobscout",
+  "license": "MIT",
+  "keywords": ["jobs", "careers", "job-search", "mcp"]
+}

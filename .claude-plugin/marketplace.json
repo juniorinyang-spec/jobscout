@@ -1,0 +1,15 @@
+{
+  "name": "jobscout",
+  "description": "jobscout: find new job postings at the companies you choose",
+  "owner": {
+    "name": "juniorinyang-spec",
+    "url": "https://github.com/juniorinyang-spec"
+  },
+  "plugins": [
+    {
+      "name": "jobscout",
+      "source": "./plugins/jobscout",
+      "description": "Search and track job postings at companies you choose, filtered by keywords, location and date, as Claude tools"
+    }
+  ]
+}

@@ -215,6 +215,30 @@ Over MCP the same filters are `posted_within_hours` and `posted_on`.
 tool server over stdio, so Claude Desktop, Claude Code, Cursor and other MCP
 clients can call it. No extra dependencies; the JSON-RPC layer is in-house.
 
+**Claude Code plugin (easiest).** Installs the tools and a skill that teaches
+Claude how to use them. jobscout itself is downloaded (checksum-verified) the
+first time the tools start, so nothing else needs installing:
+
+```
+/plugin install jobscout --marketplace juniorinyang-spec/jobscout
+```
+
+Or from a terminal:
+
+```sh
+claude plugin marketplace add juniorinyang-spec/jobscout
+claude plugin install jobscout@jobscout
+```
+
+Start a new session, then ask *"set up jobscout for me"*.
+
+**Claude Desktop extension (macOS).** Download `jobscout.mcpb` from the
+[latest release](https://github.com/juniorinyang-spec/jobscout/releases/latest)
+and open it; Claude Desktop shows an install dialog. It contains a universal
+binary for Apple Silicon and Intel Macs.
+
+**Manual setup**, if you installed jobscout yourself:
+
 Claude Code (available in every project; start a new session afterwards):
 
 ```sh
@@ -294,12 +318,14 @@ and one line in `sources::all()`.
 
 ## Releasing
 
-1. Bump `version` in `Cargo.toml`, run `cargo build` so `Cargo.lock` follows,
-   commit both, then `git tag -a vX.Y.Z -m "jobscout vX.Y.Z"` and push the
-   branch and the tag.
-2. CI creates the GitHub release and attaches binaries for four targets. Its
-   `create-release` job log prints the `url` and `sha256` lines for the
-   formula.
+1. Bump the version in `Cargo.toml` (then `cargo build` so `Cargo.lock`
+   follows), `plugins/jobscout/.claude-plugin/plugin.json`, and `VERSION=` in
+   `plugins/jobscout/scripts/jobscout-mcp`; CI checks they agree. Commit,
+   then `git tag -a vX.Y.Z -m "jobscout vX.Y.Z"` and push the branch and the
+   tag.
+2. CI creates the GitHub release, attaches binaries for four targets, and
+   builds `jobscout.mcpb` for Claude Desktop. Its `create-release` job log
+   prints the `url` and `sha256` lines for the formula.
 3. Paste those into `Formula/jobscout.rb` and push to `main`; `brew upgrade`
    picks it up.
 

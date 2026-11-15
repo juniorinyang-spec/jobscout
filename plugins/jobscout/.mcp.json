@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "jobscout": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/scripts/jobscout-mcp",
+      "args": []
+    }
+  }
+}

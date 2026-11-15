@@ -17,6 +17,12 @@ jobs:
       - run: cargo build --release --locked
       - run: cargo test --locked
       - run: ./target/release/jobscout --version
+      - name: Plugin and installer stay in step with the crate
+        run: |
+          v=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          grep -q "\"version\": \"$v\"" plugins/jobscout/.claude-plugin/plugin.json || { echo "plugin.json version != $v"; exit 1; }
+          grep -q "^VERSION=\"$v\"" plugins/jobscout/scripts/jobscout-mcp || { echo "jobscout-mcp VERSION != $v"; exit 1; }
+          cmp install.sh plugins/jobscout/scripts/install.sh || { echo "plugins/jobscout/scripts/install.sh differs from install.sh"; exit 1; }
 
   # ---- releases: on a v* tag, build binaries and attach them to a GitHub release
 
@@ -78,3 +84,29 @@ jobs:
           (cd dist && shasum -a 256 "${NAME}.tar.gz" > "${NAME}.tar.gz.sha256")
       - name: Upload to the release
         run: gh release upload "$GITHUB_REF_NAME" dist/*.tar.gz dist/*.sha256 --clobber
+
+  # ---- Claude Desktop extension: one universal macOS binary in a .mcpb bundle
+
+  desktop-extension:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build-binaries
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch the two macOS builds from the release
+        run: |
+          mkdir -p dl
+          for t in aarch64-apple-darwin x86_64-apple-darwin; do
+            gh release download "$GITHUB_REF_NAME" --pattern "jobscout-$t.tar.gz" --dir dl
+            tar -xzf "dl/jobscout-$t.tar.gz" -C dl
+          done
+      - name: Build jobscout.mcpb
+        run: |
+          sh mcpb/build.sh "$GITHUB_REF_NAME" dl/jobscout-aarch64-apple-darwin/jobscout dl/jobscout-x86_64-apple-darwin/jobscout dist/jobscout.mcpb
+          (cd dist && shasum -a 256 jobscout.mcpb > jobscout.mcpb.sha256)
+      - name: Upload to the release
+        run: gh release upload "$GITHUB_REF_NAME" dist/jobscout.mcpb dist/jobscout.mcpb.sha256 --clobber

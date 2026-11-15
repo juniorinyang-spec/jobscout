@@ -1,0 +1,31 @@
+#!/bin/sh
+# Start jobscout's MCP server for the Claude Code plugin.
+#
+# The plugin pins one jobscout release (VERSION below, kept equal to the
+# plugin version). On first start, or after a plugin update, it installs that
+# release into the plugin's data directory with the bundled install.sh
+# (download + SHA-256 check), then runs `jobscout mcp`. A jobscout already on
+# PATH is not used, so an old copy elsewhere cannot answer instead.
+#
+# stdout belongs to the MCP protocol: everything else goes to stderr.
+set -eu
+
+VERSION="0.1.9"
+
+here=$(cd "$(dirname "$0")" && pwd)
+data="${CLAUDE_PLUGIN_DATA:-$HOME/.local/share/jobscout-plugin}"
+bin_dir="$data/bin"
+bin="$bin_dir/jobscout"
+
+current=""
+if [ -x "$bin" ]; then
+  current=$("$bin" --version 2>/dev/null | awk '{print $2}') || current=""
+fi
+
+if [ "$current" != "$VERSION" ]; then
+  echo "jobscout plugin: installing jobscout $VERSION into $bin_dir" >&2
+  mkdir -p "$bin_dir"
+  JOBSCOUT_VERSION="v$VERSION" JOBSCOUT_INSTALL_DIR="$bin_dir" sh "$here/install.sh" >&2
+fi
+
+exec "$bin" mcp

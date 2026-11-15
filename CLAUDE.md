@@ -18,6 +18,17 @@ Never use `sudo`; the installer falls back to `~/.local/bin`. Claude on the
 web (claude.ai) cannot use this local MCP server; Claude Code and Claude
 Desktop can.
 
+## Distribution
+
+- `install.sh`: one-line installer (no sudo).
+- `.claude-plugin/marketplace.json` + `plugins/jobscout/`: the Claude Code
+  plugin (MCP server via `scripts/jobscout-mcp`, which installs the pinned
+  release into `${CLAUDE_PLUGIN_DATA}`, plus the `jobscout` skill). Check it
+  with `claude plugin validate ./plugins/jobscout` and `claude plugin
+  validate .`.
+- `mcpb/build.sh`: builds the Claude Desktop extension.
+- `Formula/jobscout.rb`: Homebrew (this repo is the tap).
+
 ## Working on the code
 
 - **No third-party crates.** `[dependencies]` stays empty; JSON, HTML, dates
@@ -40,11 +51,17 @@ Desktop can.
 
 ## Releasing
 
-1. Bump `version` in `Cargo.toml`, `cargo build` (updates `Cargo.lock`),
-   commit, `git tag -a vX.Y.Z -m "jobscout vX.Y.Z"`, push branch and tag.
+1. Bump the version in three places: `Cargo.toml` (then `cargo build` to
+   update `Cargo.lock`), `plugins/jobscout/.claude-plugin/plugin.json`, and
+   `VERSION=` in `plugins/jobscout/scripts/jobscout-mcp`. CI fails if they
+   disagree, or if `plugins/jobscout/scripts/install.sh` differs from
+   `install.sh` (copy it after editing). Commit, `git tag -a vX.Y.Z -m
+   "jobscout vX.Y.Z"`, push branch and tag.
 2. CI (`.github/workflows/ci.yml`) tests on macOS and Linux, then builds
    `jobscout-<target>.tar.gz` (+ `.sha256`) for four targets and attaches
-   them to the GitHub release. Asset names carry no version, so
-   `releases/latest/download/...` links keep working.
+   them to the GitHub release, then `mcpb/build.sh` combines the two macOS
+   builds into `jobscout.mcpb` (the Claude Desktop extension) and attaches
+   it. Asset names carry no version, so `releases/latest/download/...` links
+   keep working.
 3. Update `Formula/jobscout.rb` `url` and `sha256` to the new tag's source
    tarball (`curl -sL <url> | shasum -a 256`) and push.
