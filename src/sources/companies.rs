@@ -9,6 +9,8 @@
 //!   domain hosts a search API, so the user pastes the careers URL and we
 //!   fingerprint the page.
 //!
+//! - company-specific sites with a public JSON search (TikTok).
+//!
 //! `detect` turns what a user typed into a `Company` either way.
 
 use super::{looks_remote, Source};
@@ -24,6 +26,9 @@ use std::collections::HashSet;
 pub const SLUG_ATS: [&str; 5] = ["greenhouse", "lever", "ashby", "workable", "smartrecruiters"];
 /// Platforms that live on the company's own careers domain.
 pub const SITE_ATS: [&str; 2] = ["phenom", "workday"];
+/// Companies with their own careers system that jobscout reads directly:
+/// (name users type, ats, slug).
+pub const OWN_SITES: [(&str, &str, &str); 1] = [("tiktok", "tiktok", "tiktok")];
 
 /// Result of reading a board: the postings fetched (possibly capped) and the
 /// board's own total, so `company add` can report the real size.
@@ -39,7 +44,7 @@ impl Source for Companies {
         "companies"
     }
     fn describe(&self) -> &'static str {
-        "companies you track (Greenhouse, Lever, Ashby, Workable, SmartRecruiters, Phenom, Workday)"
+        "companies you track (Greenhouse, Lever, Ashby, Workable, SmartRecruiters, Phenom, Workday, TikTok)"
     }
     fn unconfigured(&self, cfg: &Config) -> Option<&'static str> {
         cfg.companies.is_empty().then_some("no companies yet; try `jobscout company add <name or url>`")
@@ -90,6 +95,7 @@ pub fn fetch_company(c: &Company, queries: &[String], max: usize) -> Result<List
         "smartrecruiters" => smartrecruiters(c, max),
         "phenom" => phenom(c, queries, max),
         "workday" => workday(c, queries, max),
+        "tiktok" => tiktok(c, queries, max),
         other => Err(format!("unknown ats '{}'", other)),
     }
 }
@@ -110,6 +116,12 @@ pub fn detect(input: &str) -> Result<(Company, usize), String> {
         return Err(format!("'{}' looks like a URL; include the https:// prefix", input));
     }
     let name = input.to_string();
+    let key = input.to_lowercase().replace([' ', '-'], "");
+    if let Some((_, ats, slug)) = OWN_SITES.iter().find(|(n, _, _)| *n == key) {
+        let c = Company { name: name.clone(), ats: ats.to_string(), slug: slug.to_string() };
+        let l = fetch_company(&c, &[], 100).map_err(|e| format!("{} careers site did not answer: {}", name, e))?;
+        return Ok((c, l.total));
+    }
     let mut slugs: Vec<String> = Vec::new();
     for s in [input.to_lowercase().replace(' ', ""), input.to_lowercase().replace(' ', "-")] {
         if !slugs.contains(&s) {
@@ -243,6 +255,9 @@ pub fn from_url(input: &str) -> Option<(&'static str, String)> {
         // api.smartrecruiters.com/v1/companies/<slug>/postings
         let slug = if segs.first() == Some(&"v1") { first(2) } else { first(0) }?;
         return Some(("smartrecruiters", slug));
+    }
+    if host == "lifeattiktok.com" || host.ends_with(".lifeattiktok.com") || host == "careers.tiktok.com" {
+        return Some(("tiktok", "tiktok".into()));
     }
     if host.ends_with(".myworkdayjobs.com") {
         // <tenant>.wd<N>.myworkdayjobs.com/<site>, .../en-US/<site>/...,
@@ -640,6 +655,99 @@ fn workday(c: &Company, queries: &[String], max: usize) -> Result<Listing, Strin
 }
 
 /// "Posted Today" / "Posted Yesterday" / "Posted 3 Days Ago" / "Posted 30+ Days Ago"
+/// TikTok's careers site (lifeattiktok.com): a public JSON search API.
+/// Postings carry no date, but their ids are ByteDance ids whose top 32
+/// bits are the creation time in unix seconds; that is used as the date.
+fn tiktok(c: &Company, queries: &[String], max: usize) -> Result<Listing, String> {
+    const API: &str = "https://api.lifeattiktok.com/api/v1/public/supplier/search/job/posts";
+    let headers = [("accept-language", "en-US"), ("origin", "https://lifeattiktok.com"), ("website-path", "tiktok")];
+    let searches: Vec<String> = if queries.is_empty() { vec![String::new()] } else { queries.to_vec() };
+    let now = time::now_unix();
+    let mut jobs = Vec::new();
+    let mut seen = HashSet::new();
+    let mut total = 0;
+    for q in &searches {
+        let mut offset = 0;
+        loop {
+            let limit = 100.min(max.saturating_sub(jobs.len()).max(1));
+            let mut body = Json::obj();
+            body.set("keyword", Json::Str(q.clone()));
+            body.set("limit", Json::Num(limit as f64));
+            body.set("offset", Json::Num(offset as f64));
+            for k in ["recruitment_id_list", "job_category_id_list", "subject_id_list", "location_code_list"] {
+                body.set(k, Json::Arr(vec![]));
+            }
+            let root = Json::parse(&http::post_json_with(API, &body.to_compact(), &headers)?)?;
+            if root.num_of("code").unwrap_or(0.0) != 0.0 {
+                return Err(format!("tiktok: {}", root.str_of("message")));
+            }
+            let data = root.get("data").ok_or("tiktok: no data in response")?;
+            let count = data.num_of("count").unwrap_or(0.0) as usize;
+            if queries.is_empty() {
+                total = count;
+            } else {
+                total += count;
+            }
+            let items = data.get("job_post_list").and_then(|a| a.as_arr()).cloned().unwrap_or_default();
+            if items.is_empty() {
+                break;
+            }
+            for it in &items {
+                let id = it.str_of("id");
+                if id.is_empty() || !seen.insert(id.clone()) {
+                    continue;
+                }
+                jobs.push(tiktok_job(c, it, &id, now));
+                if jobs.len() >= max {
+                    return Ok(Listing { jobs, total });
+                }
+            }
+            offset += items.len();
+            if offset >= count {
+                break;
+            }
+        }
+    }
+    Ok(Listing { jobs, total })
+}
+
+fn tiktok_job(c: &Company, it: &Json, id: &str, now: i64) -> Job {
+    let mut j = Job::new("tiktok", format!("{}/{}", c.slug, id));
+    j.title = it.str_of("title");
+    j.company = c.name.clone();
+    // city_info nests city -> state/province -> country via `parent`.
+    let mut place = Vec::new();
+    let mut node = it.get("city_info");
+    while let Some(n) = node {
+        let name = n.str_of("en_name");
+        if !name.is_empty() {
+            place.push(name);
+        }
+        node = n.get("parent").filter(|p| !matches!(p, Json::Null));
+    }
+    j.location = place.join(", ");
+    j.remote = looks_remote(&j.location) || looks_remote(&j.title);
+    j.url = format!("https://lifeattiktok.com/search/{}", id);
+    if let Some(secs) = bytedance_id_time(id) {
+        if secs > 1_420_070_400 && secs <= now + 86_400 {
+            j.set_posted_unix(secs);
+        }
+    }
+    for k in ["job_category", "recruit_type"] {
+        let v = it.get(k).map(|x| x.str_of("en_name")).unwrap_or_default();
+        if !v.is_empty() {
+            j.tags.push(v);
+        }
+    }
+    j.summary = html::truncate(&html::collapse_ws(&it.str_of("description")), 240);
+    j
+}
+
+/// Top 32 bits of a ByteDance id: its creation time in unix seconds.
+fn bytedance_id_time(id: &str) -> Option<i64> {
+    id.parse::<u64>().ok().map(|n| (n >> 32) as i64)
+}
+
 fn workday_age_days(s: &str) -> Option<i64> {
     let l = s.to_lowercase();
     if l.contains("today") {
@@ -655,6 +763,22 @@ fn workday_age_days(s: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tiktok_ids_and_urls() {
+        // 7706306078753311029 >> 32 = 1794264204 -> 2026-11-09T21:24:44Z.
+        assert_eq!(bytedance_id_time("7706306078753311029").map(time::unix_to_date).as_deref(), Some("2026-11-09"));
+        assert_eq!(bytedance_id_time("abc"), None);
+        assert_eq!(from_url("https://lifeattiktok.com/search"), Some(("tiktok", "tiktok".to_string())));
+        assert_eq!(from_url("https://careers.tiktok.com/position"), Some(("tiktok", "tiktok".to_string())));
+        let it = Json::parse(r#"{"id":"7706306078753311029","title":"ML Engineer","city_info":{"en_name":"San Jose","parent":{"en_name":"California","parent":{"en_name":"United States of America","parent":null}}},"job_category":{"en_name":"R&D"},"description":"Build things."}"#).unwrap();
+        let c = Company { name: "tiktok".into(), ats: "tiktok".into(), slug: "tiktok".into() };
+        let j = tiktok_job(&c, &it, "7706306078753311029", 1_900_000_000);
+        assert_eq!(j.location, "San Jose, California, United States of America");
+        assert_eq!(j.url, "https://lifeattiktok.com/search/7706306078753311029");
+        assert_eq!(j.posted_date().len(), 10);
+        assert_eq!(j.tags, vec!["R&D".to_string()]);
+    }
 
     #[test]
     fn phenom_locale_prefix() {

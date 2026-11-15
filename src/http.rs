@@ -16,15 +16,20 @@ pub fn curl_available() -> bool {
 
 /// GET `url` and return the response body as text.
 pub fn get(url: &str) -> Result<String, String> {
-    run_curl(url, None)
+    run_curl(url, None, &[])
 }
 
 /// POST a JSON body to `url` and return the response body as text.
 pub fn post_json(url: &str, body: &str) -> Result<String, String> {
-    run_curl(url, Some(body))
+    run_curl(url, Some(body), &[])
 }
 
-fn run_curl(url: &str, json_body: Option<&str>) -> Result<String, String> {
+/// POST JSON with extra request headers (`("origin", "https://...")`).
+pub fn post_json_with(url: &str, body: &str, headers: &[(&str, &str)]) -> Result<String, String> {
+    run_curl(url, Some(body), headers)
+}
+
+fn run_curl(url: &str, json_body: Option<&str>, headers: &[(&str, &str)]) -> Result<String, String> {
     let mut cmd = Command::new("curl");
     cmd.args([
         "--silent",
@@ -41,6 +46,9 @@ fn run_curl(url: &str, json_body: Option<&str>) -> Result<String, String> {
         "--header",
         "Accept: application/json, application/rss+xml, application/xml, text/html;q=0.9, */*;q=0.8",
     ]);
+    for (k, v) in headers {
+        cmd.args(["--header", &format!("{}: {}", k, v)]);
+    }
     if let Some(body) = json_body {
         cmd.args(["--header", "Content-Type: application/json", "--data-binary", body]);
     }

@@ -149,6 +149,9 @@ Over MCP the same filters are `posted_within_hours` and `posted_on`.
     page that merely links to a Workday board is followed to it.
   - Large catalogues (Phenom, Workday) are searched server-side with your
     queries rather than downloaded whole.
+  - **TikTok** (`jobscout company add tiktok`) runs its own careers site,
+    which jobscout reads through its public search. TikTok gives no posting
+    dates; jobscout reads the creation time built into each posting id.
   - Sites behind bot protection (a Cloudflare "Just a moment" page, HTTP 403
     for non-browsers) cannot be read; `company add` says so.
 
@@ -202,7 +205,7 @@ Only `companies` is on by default; turn boards on with `jobscout source on NAME`
 | `remotive`       | remotive.com API, searched per query                     |
 | `arbeitnow`      | arbeitnow.com API (Europe-heavy, remote + on-site)       |
 | `weworkremotely` | weworkremotely.com RSS                                   |
-| `companies`      | companies you track, on Greenhouse, Lever, Ashby, Workable or SmartRecruiters |
+| `companies`      | companies you track: on Greenhouse, Lever, Ashby, Workable, SmartRecruiters, Phenom or Workday, plus TikTok |
 
 Adding a board is one file in `src/sources/` implementing the `Source` trait
 and one line in `sources::all()`.

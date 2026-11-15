@@ -43,7 +43,7 @@ COMMANDS
   sources              List available job boards
   company add X...     Track a company by name or careers URL (ATS auto-detected:
                        Greenhouse, Lever, Ashby, Workable, SmartRecruiters,
-                       Phenom sites, Workday boards). Their open roles are
+                       Phenom sites, Workday boards, TikTok). Their open roles are
                        shown however old; max_age_days applies to boards only.
   company list         Show tracked companies
   company remove X     Stop tracking a company
