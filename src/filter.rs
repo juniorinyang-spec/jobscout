@@ -25,7 +25,9 @@ impl Filter {
         if self.remote_only && !job.remote {
             return false;
         }
-        if self.max_age_days > 0 {
+        // A tracked company's board lists only open roles, and a role opened
+        // months ago is still worth seeing; the age limit is for job boards.
+        if self.max_age_days > 0 && !job.tracked {
             if let Some(posted) = job.posted_unix {
                 if now - posted > (self.max_age_days as i64) * 86_400 {
                     return false;
@@ -33,7 +35,7 @@ impl Filter {
             }
         }
         let hay = job.haystack();
-        if self.exclude.iter().any(|x| !x.is_empty() && hay.contains(x.as_str())) {
+        if self.exclude.iter().any(|x| !x.trim().is_empty() && contains_word(&hay, x.trim())) {
             return false;
         }
         let queries: Vec<&String> = self.queries.iter().filter(|q| !q.trim().is_empty()).collect();
@@ -111,5 +113,23 @@ mod tests {
         f.remote_only = true;
         assert!(!f.keep(&job("x", false, 1), 1_000_000));
         assert!(f.keep(&job("x", true, 1), 1_000_000));
+    }
+
+    #[test]
+    fn tracked_companies_ignore_age() {
+        let f = filter(&[], &[]);
+        let mut j = job("Product Engineer", false, 200);
+        assert!(!f.keep(&j, 1_000_000));
+        j.tracked = true;
+        assert!(f.keep(&j, 1_000_000));
+    }
+
+    #[test]
+    fn exclude_is_whole_word_phrase() {
+        let f = filter(&["go"], &["go to market", "intern"]);
+        assert!(f.keep(&job("Go developer", true, 1), 1_000_000));
+        assert!(!f.keep(&job("Senior Associate Go To Market", true, 1), 1_000_000));
+        assert!(!f.keep(&job("Go intern", true, 1), 1_000_000));
+        assert!(f.keep(&job("Go engineer, internal tools", true, 1), 1_000_000));
     }
 }

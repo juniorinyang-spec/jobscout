@@ -67,13 +67,24 @@ impl Source for HackerNews {
 
                 let mut j = Job::new("hackernews", id.clone());
                 j.company = parts.first().map(|s| s.to_string()).unwrap_or_default();
-                // Title = first segment after the company that is not a bare URL.
-                let is_url = |s: &str| s.starts_with("http://") || s.starts_with("https://") || (s.contains('.') && !s.contains(' '));
-                let title_idx = (1..parts.len()).find(|&i| !is_url(parts[i]));
-                j.title = match title_idx {
-                    Some(i) => parts[i].to_string(),
-                    None => html::truncate(&header, 120),
-                };
+                let rest: Vec<&str> = lines.collect();
+                let mut title_idx = pick_title(&parts);
+                // When the header names no role ("Fly.io | REMOTE | Full time"),
+                // the roles are listed in the body; take the first short line
+                // that names one, and keep every header segment as location.
+                if let Some(i) = title_idx.filter(|&i| !names_role(parts[i])) {
+                    if let Some(line) = role_line(&rest) {
+                        j.title = line;
+                        title_idx = None;
+                    } else {
+                        j.title = parts[i].to_string();
+                    }
+                } else {
+                    j.title = match title_idx {
+                        Some(i) => parts[i].to_string(),
+                        None => html::truncate(&header, 120),
+                    };
+                }
                 j.location = parts
                     .iter()
                     .enumerate()
@@ -85,7 +96,6 @@ impl Source for HackerNews {
                 j.url = format!("https://news.ycombinator.com/item?id={}", id);
                 j.set_posted_iso(&h.str_of("created_at"));
                 j.tags.push(format!("by {}", h.str_of("author")));
-                let rest: Vec<&str> = lines.collect();
                 j.summary = html::truncate(&html::collapse_ws(&rest.join(" ")), 280);
                 jobs.push(j);
                 if jobs.len() >= cfg.max_per_source {
@@ -98,5 +108,83 @@ impl Source for HackerNews {
             }
         }
         Ok(jobs)
+    }
+}
+
+fn is_url(s: &str) -> bool {
+    s.starts_with("http://") || s.starts_with("https://") || (s.contains('.') && !s.contains(' '))
+}
+
+const ROLE_WORDS: &[&str] = &[
+    "engineer", "developer", "designer", "scientist", "manager", "architect", "analyst", "researcher",
+    "programmer", "administrator", "specialist", "consultant", "recruiter", "director", "lead", "head of",
+    "sre", "devops", "swe", "cto", "founding", "intern", "technician", "writer", "marketer", "accountant",
+];
+
+/// A segment that only describes the arrangement: remote/onsite, contract
+/// type, salary, visa. Never a title.
+fn is_meta(s: &str) -> bool {
+    let l = s.to_lowercase();
+    const META: &[&str] = &[
+        "remote", "onsite", "on-site", "on site", "hybrid", "full-time", "full time", "fulltime", "part-time",
+        "part time", "contract", "freelance", "visa", "relocation", "equity", "salary", "anywhere", "worldwide",
+    ];
+    let money = l.starts_with('$') || l.starts_with('€') || l.starts_with('£') || l.contains("k -") || l.contains("k–") || l.contains("k-");
+    money || (META.iter().any(|m| l.contains(m)) && !ROLE_WORDS.iter().any(|r| l.contains(r)))
+}
+
+/// Which `|`-separated header segment is the job title. Headers follow
+/// `Company | Role | Location | REMOTE | Salary` loosely, so prefer a
+/// segment that names a role, then any segment that is not a URL or meta.
+fn pick_title(parts: &[&str]) -> Option<usize> {
+    let candidates = || (1..parts.len()).filter(|&i| !is_url(parts[i]));
+    candidates()
+        .find(|&i| names_role(parts[i]))
+        .or_else(|| candidates().find(|&i| !is_meta(parts[i])))
+        .or_else(|| candidates().next())
+}
+
+fn names_role(s: &str) -> bool {
+    let l = s.to_lowercase();
+    ROLE_WORDS.iter().any(|r| l.contains(r))
+}
+
+/// First short line near the top of the body that names a role, with list
+/// bullets and a trailing colon or link stripped.
+fn role_line(body: &[&str]) -> Option<String> {
+    body.iter()
+        .take(8)
+        .map(|l| l.trim().trim_start_matches(['-', '*', '•', '·']).trim())
+        .map(|l| l.split(" http").next().unwrap_or(l).trim().trim_end_matches([':', '-', '–']).trim())
+        .find(|l| !l.is_empty() && l.chars().count() <= 90 && names_role(l))
+        .map(|l| l.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn title<'a>(header: &'a str) -> &'a str {
+        let parts: Vec<&str> = header.split('|').map(|p| p.trim()).filter(|p| !p.is_empty()).collect();
+        pick_title(&parts).map(|i| parts[i]).unwrap_or("")
+    }
+
+    #[test]
+    fn skips_arrangement_segments() {
+        assert_eq!(title("Bubblehouse | Fully REMOTE | Full-Time | $200–250k | Principal Engineer"), "Principal Engineer");
+        assert_eq!(title("Acme | https://acme.com | Senior Rust Engineer | Remote (US)"), "Senior Rust Engineer");
+        assert_eq!(title("Radar Labs | Software Engineers (SRE, ML) | Remote (US), NYC | Full Time"), "Software Engineers (SRE, ML)");
+        // No role word anywhere: first non-meta segment.
+        assert_eq!(title("Foo | REMOTE | Berlin | Growth"), "Berlin");
+        // Only meta: still return something rather than nothing.
+        assert_eq!(title("Foo | REMOTE"), "REMOTE");
+    }
+
+    #[test]
+    fn role_from_body_when_header_has_none() {
+        let body = ["We build a global cloud.", "", "- Senior Backend Engineer: https://fly.io/jobs/x", "- Designer"];
+        assert_eq!(role_line(&body).as_deref(), Some("Senior Backend Engineer"));
+        let long = ["We are looking for an engineer who loves distributed systems and has shipped at scale for many years, ideally in Rust or Go."];
+        assert_eq!(role_line(&long), None);
     }
 }

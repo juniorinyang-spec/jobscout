@@ -9,7 +9,7 @@
 use crate::bundle;
 use crate::config::Config;
 use crate::json::Json;
-use crate::scout::{self, AddOutcome};
+use crate::scout::{self, AddOutcome, Phrases};
 use std::fs;
 use std::io::{self, BufRead, Write};
 
@@ -195,7 +195,7 @@ fn tools_list() -> Json {
             &[
                 p("query", "string", "Words that must all appear (whole-word, case-insensitive) in the title, company, location, tags or summary. Omit to use the user's configured queries."),
                 p("remote_only", "boolean", "Only remote postings."),
-                p("max_age_days", "integer", "Ignore postings older than this many days (default from config, usually 14; 0 = no limit)."),
+                p("max_age_days", "integer", "Ignore job-board postings older than this many days (default from config, usually 14; 0 = no limit). Tracked companies' open roles are never age-filtered."),
                 p("sources", "string[]", SOURCES_DESC),
                 p("limit", "integer", "Maximum postings to return (default 25)."),
                 p("format", "string", "'text' (default) or 'json' for structured records."),
@@ -220,6 +220,13 @@ fn tools_list() -> Json {
         tool("list_queries", "List the configured search queries.", &[]),
         tool("add_query", "Add a search query. All its words must appear in a posting for it to match.", &[req("query", "string", "Query words, e.g. 'rust backend'.")]),
         tool("remove_query", "Remove a search query.", &[req("query", "string", "Exact query to remove.")]),
+        tool("list_excludes", "List the exclude phrases; a posting containing any of them is dropped.", &[]),
+        tool(
+            "add_exclude",
+            "Add an exclude phrase (whole words, case-insensitive). Useful against noise, e.g. 'go to market' when a query is 'go'.",
+            &[req("phrase", "string", "Phrase to exclude, e.g. 'staff' or 'go to market'.")],
+        ),
+        tool("remove_exclude", "Remove an exclude phrase.", &[req("phrase", "string", "Exact phrase to remove.")]),
         tool("list_bundles", "List digests written by previous runs, newest first.", &[p("limit", "integer", "Maximum entries (default 10).")]),
         tool("get_bundle", "Read one digest (Markdown).", &[req("name", "string", "Bundle name from list_bundles, e.g. 2026-11-15_09-00-00.")]),
         tool("get_config", "Show the active configuration: queries, excludes, filters, sources, companies and file paths.", &[]),
@@ -248,6 +255,9 @@ fn tools_call(params: &Json) -> Result<Json, (i64, String)> {
         "list_queries",
         "add_query",
         "remove_query",
+        "list_excludes",
+        "add_exclude",
+        "remove_exclude",
         "list_bundles",
         "get_bundle",
         "get_config",
@@ -295,11 +305,11 @@ fn run_tool(name: &str, args: &Json) -> Result<String, String> {
             let dry = args.bool_of("dry_run").unwrap_or(false);
             let out = scout::run(&cfg, &only, int_arg(args, "limit"), dry, true)?;
             let mut text = format!(
-                "{} fetched, {} matched the queries ({}), {} new{}.\n",
+                "{} fetched, {} matched the queries ({}), {}{}.\n",
                 out.fetched,
                 out.matched,
                 cfg.queries.join(" | "),
-                out.new.len(),
+                out.new_summary(),
                 if out.dry_run { " (dry run: nothing remembered)" } else { "" }
             );
             if let Some(b) = &out.bundle {
@@ -338,22 +348,25 @@ fn run_tool(name: &str, args: &Json) -> Result<String, String> {
             }
         }
         "list_queries" => Ok(if cfg.queries.is_empty() { "No queries configured (everything matches).".to_string() } else { cfg.queries.join("\n") }),
-        "add_query" => {
-            let q = args.str_of("query");
-            if scout::add_query(&mut cfg, &q)? {
-                Ok(format!("Added query: {}", q.trim()))
+        "add_query" | "add_exclude" => {
+            let (which, key, noun) = if name == "add_query" { (Phrases::Queries, "query", "query") } else { (Phrases::Exclude, "phrase", "exclude phrase") };
+            let q = args.str_of(key);
+            if scout::add_phrase(&mut cfg, which, &q)? {
+                Ok(format!("Added {}: {}", noun, q.trim()))
             } else {
-                Ok(format!("Query already present: {}", q.trim()))
+                Ok(format!("Already present: {}", q.trim()))
             }
         }
-        "remove_query" => {
-            let q = args.str_of("query");
-            if scout::remove_query(&mut cfg, &q)? {
-                Ok(format!("Removed query: {}", q.trim()))
+        "remove_query" | "remove_exclude" => {
+            let (which, key, noun) = if name == "remove_query" { (Phrases::Queries, "query", "query") } else { (Phrases::Exclude, "phrase", "exclude phrase") };
+            let q = args.str_of(key);
+            if scout::remove_phrase(&mut cfg, which, &q)? {
+                Ok(format!("Removed {}: {}", noun, q.trim()))
             } else {
-                Err(format!("No such query: {}", q.trim()))
+                Err(format!("No such {}: {}", noun, q.trim()))
             }
         }
+        "list_excludes" => Ok(if cfg.exclude.is_empty() { "No exclude phrases configured.".to_string() } else { cfg.exclude.join("\n") }),
         "list_bundles" => {
             let limit = int_arg(args, "limit").unwrap_or(10).max(1);
             let files = bundle::list(&cfg.bundles_dir());

@@ -57,7 +57,8 @@ impl Source for Companies {
         for c in &cfg.companies {
             match fetch_company(c, &cfg.queries, cfg.max_per_source) {
                 Ok(l) => {
-                    for j in l.jobs {
+                    for mut j in l.jobs {
+                        j.tracked = true;
                         let req = j.id.rsplit('/').next().unwrap_or(&j.id).to_lowercase();
                         if seen_req.insert(format!("{}|{}", j.company.to_lowercase(), req)) {
                             jobs.push(j);

@@ -53,7 +53,8 @@ The only runtime requirement is `curl`, which macOS ships with.
 jobscout init                 # writes ~/.jobscout/config.json
 jobscout query add rust       # what to look for (repeat for more)
 jobscout company add stripe   # track a company; its ATS is auto-detected
-jobscout company add https://jobs.lever.co/mistral https://jobs.ashbyhq.com/linear
+jobscout company add https://jobs.lever.co/spotify https://jobs.ashbyhq.com/linear
+jobscout exclude add go to market  # drop postings containing a phrase
 
 jobscout search rust backend  # one-off search, ignores memory
 jobscout run                  # new postings only; writes a bundle; remembers them
@@ -95,7 +96,14 @@ Useful flags: `--source NAME` (repeatable), `--remote`, `--limit N`, `--json`.
 - A posting matches if **any** query matches. A query matches when **all** of
   its words appear as whole words somewhere in the title, company, location,
   tags, salary or summary (`rust` does not match `trust`).
-- `exclude` phrases drop a posting when present.
+- `exclude` phrases drop a posting when present, matched as whole words
+  (`intern` drops "Go intern" but not "internal tools"). Manage them with
+  `jobscout exclude add|remove|list`. Short queries such as `go` also match
+  "Go To Market" sales roles; `jobscout exclude add go to market` fixes that.
+- `max_age_days` drops job-board postings older than that (0 = no limit).
+  Roles from tracked companies are shown however long they have been open.
+- `run --limit N` shows and remembers only the N newest; the summary line
+  says how many were new in total (`24 new, 3 shown`).
 - `companies` is easiest to manage with `jobscout company add`, which accepts
   a company name or a careers URL.
   - **By name** (`stripe`, `public storage`): jobscout probes Greenhouse,
@@ -137,7 +145,8 @@ Use the absolute path from `which jobscout`; GUI apps don't share your shell's
 mentions Rust?"* or *"start tracking Home Depot and Nike"*.
 
 Tools exposed: `search_jobs`, `new_jobs`, `list_companies`, `add_company`,
-`remove_company`, `list_queries`, `add_query`, `remove_query`, `list_bundles`,
+`remove_company`, `list_queries`, `add_query`, `remove_query`,
+`list_excludes`, `add_exclude`, `remove_exclude`, `list_bundles`,
 `get_bundle`, `get_config`. Bundles and the config are also exposed as MCP
 resources (`jobscout://bundle/<name>`, `jobscout://config`).
 

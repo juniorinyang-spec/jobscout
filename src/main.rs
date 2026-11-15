@@ -20,7 +20,7 @@ mod time;
 use config::Config;
 use json::Json;
 use model::Job;
-use scout::AddOutcome;
+use scout::{AddOutcome, Phrases};
 use std::process::exit;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -42,12 +42,16 @@ COMMANDS
   sources              List available job boards
   company add X...     Track a company by name or careers URL (ATS auto-detected:
                        Greenhouse, Lever, Ashby, Workable, SmartRecruiters,
-                       Phenom sites, Workday boards)
+                       Phenom sites, Workday boards). Their open roles are
+                       shown however old; max_age_days applies to boards only.
   company list         Show tracked companies
   company remove X     Stop tracking a company
   query add WORDS      Add a search query (all words must appear)
   query remove WORDS   Remove a query
   query list           Show queries
+  exclude add WORDS    Drop postings containing this phrase (e.g. 'go to market')
+  exclude remove WORDS Remove an exclude phrase
+  exclude list         Show exclude phrases
   config               Show the active config and paths
   forget               Clear the memory of seen postings
   help, version
@@ -141,7 +145,8 @@ fn run() -> Result<(), String> {
         "mcp" => mcp::serve(),
         "bundles" => cmd_bundles(),
         "company" | "companies" => cmd_company(&a),
-        "query" | "queries" => cmd_query(&a),
+        "query" | "queries" => cmd_phrases(&a, Phrases::Queries, "query"),
+        "exclude" | "excludes" => cmd_phrases(&a, Phrases::Exclude, "exclude"),
         "forget" => cmd_forget(),
         other => Err(format!("unknown command '{}' (see `jobscout help`)", other)),
     }
@@ -214,10 +219,10 @@ fn cmd_run(a: &Args) -> Result<(), String> {
         eprintln!("bundle written: {}", b.display());
     }
     eprintln!(
-        "{} fetched, {} matched, {} new{}",
+        "{} fetched, {} matched, {}{}",
         out.fetched,
         out.matched,
-        out.new.len(),
+        out.new_summary(),
         if out.dry_run { " (dry run, nothing saved)" } else { "" }
     );
     Ok(())
@@ -288,32 +293,46 @@ fn cmd_company(a: &Args) -> Result<(), String> {
             if rest.is_empty() {
                 return Err("usage: jobscout company remove <name or slug>".into());
             }
+            let mut missing = 0;
             for target in rest {
                 if scout::remove_company(&mut cfg, target)? {
                     println!("removed {}", target);
                 } else {
+                    missing += 1;
                     eprintln!("{}: not tracked", target);
                 }
             }
-            Ok(())
+            if missing > 0 {
+                Err(format!("{} compan{} not tracked", missing, if missing == 1 { "y was" } else { "ies were" }))
+            } else {
+                Ok(())
+            }
         }
         other => Err(format!("unknown subcommand 'company {}' (add, list, remove)", other)),
     }
 }
 
-fn cmd_query(a: &Args) -> Result<(), String> {
+/// `query ...` and `exclude ...` share one shape: add / remove / list phrases.
+fn cmd_phrases(a: &Args, which: Phrases, noun: &str) -> Result<(), String> {
     let mut cfg = Config::load()?;
     let sub = a.words.first().map(|s| s.as_str()).unwrap_or("list");
     let phrase = a.words[a.words.len().min(1)..].join(" ").trim().to_string();
     match sub {
         "list" | "ls" => {
-            for q in &cfg.queries {
+            let list = match which {
+                Phrases::Queries => &cfg.queries,
+                Phrases::Exclude => &cfg.exclude,
+            };
+            if list.is_empty() {
+                eprintln!("no {} phrases configured", noun);
+            }
+            for q in list {
                 println!("{}", q);
             }
             Ok(())
         }
         "add" => {
-            if scout::add_query(&mut cfg, &phrase)? {
+            if scout::add_phrase(&mut cfg, which, &phrase)? {
                 println!("added: {}", phrase);
             } else {
                 println!("already present: {}", phrase);
@@ -321,14 +340,14 @@ fn cmd_query(a: &Args) -> Result<(), String> {
             Ok(())
         }
         "remove" | "rm" => {
-            if scout::remove_query(&mut cfg, &phrase)? {
+            if scout::remove_phrase(&mut cfg, which, &phrase)? {
                 println!("removed: {}", phrase);
                 Ok(())
             } else {
-                Err(format!("no such query: {}", phrase))
+                Err(format!("no such {}: {}", noun, phrase))
             }
         }
-        other => Err(format!("unknown subcommand 'query {}' (add, list, remove)", other)),
+        other => Err(format!("unknown subcommand '{} {}' (add, list, remove)", noun, other)),
     }
 }
 

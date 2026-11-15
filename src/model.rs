@@ -18,6 +18,10 @@ pub struct Job {
     pub tags: Vec<String>,
     pub salary: String,
     pub summary: String,
+    /// Came from a company the user tracks. Such postings stay listed for
+    /// as long as the role is open, so the age filter does not apply.
+    /// Internal only; not written to bundle JSON.
+    pub tracked: bool,
 }
 
 impl Job {
@@ -35,6 +39,7 @@ impl Job {
             tags: Vec::new(),
             salary: String::new(),
             summary: String::new(),
+            tracked: false,
         }
     }
 

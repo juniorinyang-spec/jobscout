@@ -101,6 +101,9 @@ pub fn search(cfg: &Config, only: &[String], limit: usize, quiet: bool) -> Resul
 pub struct RunOutcome {
     pub fetched: usize,
     pub matched: usize,
+    /// Postings not seen before, before `limit` was applied.
+    pub new_total: usize,
+    /// The ones returned (and, unless dry run, remembered): at most `limit`.
     pub new: Vec<Job>,
     pub bundle: Option<PathBuf>,
     pub dry_run: bool,
@@ -118,6 +121,7 @@ pub fn run(cfg: &Config, only: &[String], limit: Option<usize>, dry_run: bool, q
     jobs.retain(|j| filt.keep(j, now));
     let matched = jobs.len();
     jobs.retain(|j| !seen.contains(&j.key()));
+    let new_total = jobs.len();
     sort_newest_first(&mut jobs);
     if let Some(n) = limit {
         jobs.truncate(n);
@@ -133,7 +137,18 @@ pub fn run(cfg: &Config, only: &[String], limit: Option<usize>, dry_run: bool, q
         seen.save()?;
         bundle_path = Some(md);
     }
-    Ok(RunOutcome { fetched, matched, new: jobs, bundle: bundle_path, dry_run })
+    Ok(RunOutcome { fetched, matched, new_total, new: jobs, bundle: bundle_path, dry_run })
+}
+
+impl RunOutcome {
+    /// "24 new" or, when a limit hid some, "24 new, 3 shown".
+    pub fn new_summary(&self) -> String {
+        if self.new.len() < self.new_total {
+            format!("{} new, {} shown", self.new_total, self.new.len())
+        } else {
+            format!("{} new", self.new_total)
+        }
+    }
 }
 
 pub enum AddOutcome {
@@ -170,26 +185,44 @@ pub fn remove_company(cfg: &mut Config, target: &str) -> Result<bool, String> {
     Ok(removed)
 }
 
-/// Returns false when the query was already present.
-pub fn add_query(cfg: &mut Config, phrase: &str) -> Result<bool, String> {
+/// Which phrase list of the config to edit.
+#[derive(Clone, Copy)]
+pub enum Phrases {
+    Queries,
+    Exclude,
+}
+
+impl Phrases {
+    fn list(self, cfg: &mut Config) -> &mut Vec<String> {
+        match self {
+            Phrases::Queries => &mut cfg.queries,
+            Phrases::Exclude => &mut cfg.exclude,
+        }
+    }
+}
+
+/// Returns false when the phrase was already present.
+pub fn add_phrase(cfg: &mut Config, which: Phrases, phrase: &str) -> Result<bool, String> {
     let phrase = phrase.trim();
     if phrase.is_empty() {
-        return Err("query must not be empty".into());
+        return Err("phrase must not be empty".into());
     }
-    if cfg.queries.iter().any(|q| q.eq_ignore_ascii_case(phrase)) {
+    let list = which.list(cfg);
+    if list.iter().any(|q| q.eq_ignore_ascii_case(phrase)) {
         return Ok(false);
     }
-    cfg.queries.push(phrase.to_string());
+    list.push(phrase.to_string());
     cfg.save()?;
     Ok(true)
 }
 
-/// Returns false when no such query existed.
-pub fn remove_query(cfg: &mut Config, phrase: &str) -> Result<bool, String> {
+/// Returns false when no such phrase existed.
+pub fn remove_phrase(cfg: &mut Config, which: Phrases, phrase: &str) -> Result<bool, String> {
     let phrase = phrase.trim();
-    let before = cfg.queries.len();
-    cfg.queries.retain(|q| !q.eq_ignore_ascii_case(phrase));
-    let removed = cfg.queries.len() != before;
+    let list = which.list(cfg);
+    let before = list.len();
+    list.retain(|q| !q.eq_ignore_ascii_case(phrase));
+    let removed = list.len() != before;
     if removed {
         cfg.save()?;
     }
