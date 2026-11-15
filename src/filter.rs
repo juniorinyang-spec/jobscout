@@ -35,8 +35,13 @@ impl Filter {
             }
         }
         let hay = job.haystack();
-        if self.exclude.iter().any(|x| !x.trim().is_empty() && contains_word(&hay, x.trim())) {
-            return false;
+        if !self.exclude.is_empty() {
+            // "go to market" must also drop "Go-to-Market" (and vice versa):
+            // compare exclude phrases with hyphens read as spaces.
+            let flat = dehyphen(&hay);
+            if self.exclude.iter().map(|x| dehyphen(x)).any(|x| !x.is_empty() && contains_word(&flat, &x)) {
+                return false;
+            }
         }
         let queries: Vec<&String> = self.queries.iter().filter(|q| !q.trim().is_empty()).collect();
         if queries.is_empty() {
@@ -44,6 +49,11 @@ impl Filter {
         }
         queries.iter().any(|q| q.split_whitespace().all(|word| contains_word(&hay, word)))
     }
+}
+
+/// Hyphens as spaces, whitespace collapsed: `go-to-market` -> `go to market`.
+fn dehyphen(s: &str) -> String {
+    s.replace('-', " ").split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// Whole-word match: `rust` must not match `trust`. A word boundary is any
@@ -129,6 +139,11 @@ mod tests {
         let f = filter(&["go"], &["go to market", "intern"]);
         assert!(f.keep(&job("Go developer", true, 1), 1_000_000));
         assert!(!f.keep(&job("Senior Associate Go To Market", true, 1), 1_000_000));
+        assert!(!f.keep(&job("Senior Associate - Go-to-Market Dämmung", true, 1), 1_000_000));
+        assert!(!f.keep(&job("Go-To-Market  & Growth Intern", true, 1), 1_000_000));
+        let f2 = filter(&["go"], &["go-to-market"]);
+        assert!(!f2.keep(&job("Go To Market lead", true, 1), 1_000_000));
+        assert!(f2.keep(&job("Go backend engineer", true, 1), 1_000_000));
         assert!(!f.keep(&job("Go intern", true, 1), 1_000_000));
         assert!(f.keep(&job("Go engineer, internal tools", true, 1), 1_000_000));
     }

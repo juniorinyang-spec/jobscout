@@ -51,7 +51,9 @@ pub fn collect(cfg: &Config, only: &[String], quiet: bool) -> Result<Vec<Job>, S
         match src.fetch(cfg) {
             Ok(found) => {
                 let mut added = 0;
-                for j in found {
+                for mut j in found {
+                    // Some boards pad titles with tabs or newlines.
+                    j.title = j.title.split_whitespace().collect::<Vec<_>>().join(" ");
                     let uid = model::url_identity(&j.url);
                     if !keys.insert(j.key()) || (!uid.is_empty() && !urls.insert(uid)) {
                         continue;
