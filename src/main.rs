@@ -40,7 +40,8 @@ COMMANDS
   mcp                  Serve as an MCP tool server on stdio (Claude Desktop,
                        Claude Code, Cursor...). See README for setup.
   bundles              List bundles written so far
-  sources              List available job boards
+  sources              List sources (job boards, tracked companies) and
+                       whether each is on
   company add X...     Track a company by name or careers URL (ATS auto-detected:
                        Greenhouse, Lever, Ashby, Workable, SmartRecruiters,
                        Phenom sites, Workday boards, TikTok, or any careers
@@ -64,7 +65,7 @@ COMMANDS
   help, version
 
 OPTIONS
-  -s, --source NAME    Only use this board (repeatable)
+  -s, --source NAME    Only use this source (repeatable; see `sources`)
   -n, --limit N        Max postings to print (search: 50). With `run`, only
                        the N shown are remembered; the rest stay new.
   -r, --remote         Remote postings only

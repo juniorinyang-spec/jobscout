@@ -23,7 +23,19 @@ bundle written: ~/.jobscout/bundles/2026-11-15_10-30-00.md
 
 ## Install
 
-**Homebrew** (macOS or Linux). The repo doubles as a tap:
+**One line, no sudo** (macOS or Linux). Downloads the right build for your
+machine, checks its SHA-256 checksum, and installs into `/usr/local/bin` if
+you can write there, otherwise `~/.local/bin`:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/juniorinyang-spec/jobscout/main/install.sh | sh
+```
+
+Set `JOBSCOUT_INSTALL_DIR=/some/dir` to choose the directory, or
+`JOBSCOUT_VERSION=v0.1.9` to pin a release. Run it again to upgrade.
+
+**Homebrew** (macOS or Linux). The repo doubles as a tap; the formula builds
+from source, so Homebrew installs Rust for the build:
 
 ```sh
 brew tap juniorinyang-spec/jobscout https://github.com/juniorinyang-spec/jobscout
@@ -31,9 +43,10 @@ brew install juniorinyang-spec/jobscout/jobscout        # latest release
 brew install --HEAD juniorinyang-spec/jobscout/jobscout # or straight from main
 ```
 
-**Prebuilt binary**, no toolchain needed. Each release on the
+**Prebuilt binary by hand.** Each release on the
 [Releases page](https://github.com/juniorinyang-spec/jobscout/releases) has
-tarballs for macOS (Apple Silicon and Intel) and Linux (x64 and arm64):
+tarballs (with `.sha256` files) for macOS (Apple Silicon and Intel) and Linux
+(x64 and arm64):
 
 ```sh
 # pick one: aarch64-apple-darwin (Apple Silicon), x86_64-apple-darwin (Intel),
@@ -44,7 +57,8 @@ sudo mkdir -p /usr/local/bin && sudo mv jobscout-$T/jobscout /usr/local/bin/
 jobscout --version
 ```
 
-Linux binaries need glibc 2.35 or newer (Ubuntu 22.04, Debian 12, RHEL 9).
+Linux binaries need glibc 2.34 or newer (Ubuntu 22.04, Debian 12, RHEL 9 and
+later).
 
 **With Rust** (<https://rustup.rs>):
 
@@ -52,7 +66,30 @@ Linux binaries need glibc 2.35 or newer (Ubuntu 22.04, Debian 12, RHEL 9).
 cargo install --git https://github.com/juniorinyang-spec/jobscout --locked
 ```
 
-The only runtime requirement is `curl`, which macOS ships with.
+The only runtime requirement is `curl`, which macOS and most Linux
+distributions ship with.
+
+### Installing with an AI assistant (Claude Code and others)
+
+If you are an AI assistant installing jobscout for a user, do this:
+
+1. Run the one-line installer above. It needs no sudo and no password, so it
+   works non-interactively. Do not use `sudo` yourself.
+2. Check it: run the `jobscout --version` path the installer printed. If it
+   says the directory is not on `PATH`, tell the user, and use the full path
+   meanwhile.
+3. Set the user up (ask them for these): `jobscout init`,
+   `jobscout location set "<their country>"`, then
+   `jobscout company add <company name or careers URL> ...` and
+   `jobscout query add <words>`.
+4. Try it: `jobscout search -n 5`.
+5. To let Claude Code use it as a tool, register the full path once:
+   `claude mcp add --scope user jobscout -- "$(command -v jobscout)" mcp`,
+   and tell the user to start a new Claude Code session. For Claude Desktop,
+   see [Use it from Claude](#use-it-from-claude-mcp). Claude on the web
+   (claude.ai) cannot run local tools like this one.
+
+Uninstall: delete the `jobscout` binary, and `~/.jobscout` for its data.
 
 ## Usage
 
@@ -75,7 +112,8 @@ jobscout forget               # clear memory of seen postings
 ```
 
 Useful flags: `--source NAME` (repeatable), `--remote`, `--limit N`, `--json`,
-`--since DUR`.
+`--since DUR`, `--on DAY`, `--location PLACE`, `--anywhere`, `--quiet`.
+`jobscout help` lists every command and flag.
 
 ```sh
 jobscout search --since 24h                 # everything posted in the last day
@@ -89,7 +127,8 @@ jobscout search --on yesterday -s companies # your tracked companies, yesterday
 `--since` and `--on` apply to every source, tracked companies included, and
 replace `max_age_days` for that call. Postings that carry no date are left out.
 `--on` takes `YYYY-MM-DD`, `today`, `yesterday` or a weekday name (`friday`,
-`fri`: the most recent one, today included), read in your Mac's time zone.
+`fri`: the most recent one, today included), read in your computer's time
+zone.
 Over MCP the same filters are `posted_within_hours` and `posted_on`.
 
 ### Config
@@ -140,15 +179,19 @@ Over MCP the same filters are `posted_within_hours` and `posted_on`.
   says how many were new in total (`24 new, 3 shown`).
 - `companies` is easiest to manage with `jobscout company add`, which accepts
   a company name or a careers URL.
-  - **By name** (`stripe`, `public storage`): jobscout probes Greenhouse,
-    Lever, Ashby, Workable and SmartRecruiters for a matching board.
+  - **By name** (`stripe`, `public storage`, `tiktok`): jobscout probes
+    Greenhouse, Lever, Ashby, Workable and SmartRecruiters, trying the usual
+    spellings companies use when the plain name was taken (`doordashusa`,
+    `hubspotjobs`, `kraken.com`), and keeps the board with the most open
+    roles. If a name is not found, paste the careers page URL instead.
   - **By URL**: a board URL on one of those systems is recognised from its
     hostname. A URL on the company's own domain (`https://jobs.cvshealth.com/`)
     is fetched and fingerprinted: Phenom-powered careers sites and Workday
     boards (`<tenant>.wd<N>.myworkdayjobs.com/<site>`) are supported, and a
     page that merely links to a Workday board is followed to it.
-  - Large catalogues (Phenom, Workday) are searched server-side with your
-    queries rather than downloaded whole.
+  - Large catalogues (Phenom, Workday, TikTok) are searched server-side with
+    your queries rather than downloaded whole. Phenom postings link to the
+    company's own job page.
   - **Any other careers site that publishes schema.org `JobPosting` data**
     (the structured data Google for Jobs reads), for example
     `jobscout company add https://careers.marriott.com/`. jobscout finds job
@@ -172,25 +215,32 @@ Over MCP the same filters are `posted_within_hours` and `posted_on`.
 tool server over stdio, so Claude Desktop, Claude Code, Cursor and other MCP
 clients can call it. No extra dependencies; the JSON-RPC layer is in-house.
 
-Claude Code:
+Claude Code (available in every project; start a new session afterwards):
 
 ```sh
-claude mcp add jobscout -- jobscout mcp
+claude mcp add --scope user jobscout -- "$(command -v jobscout)" mcp
 ```
 
-Claude Desktop (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+Claude Desktop: add this to
+`~/Library/Application Support/Claude/claude_desktop_config.json`, with the
+path that `command -v jobscout` prints (`/usr/local/bin/jobscout`,
+`~/.local/bin/jobscout` written out in full, or `/opt/homebrew/bin/jobscout`
+for Homebrew), then quit and reopen the app:
 
 ```json
 {
   "mcpServers": {
-    "jobscout": { "command": "/opt/homebrew/bin/jobscout", "args": ["mcp"] }
+    "jobscout": { "command": "/usr/local/bin/jobscout", "args": ["mcp"] }
   }
 }
 ```
 
-Use the absolute path from `which jobscout`; GUI apps don't share your shell's
-`PATH`. Then ask Claude things like *"anything new at Stripe or Linear that
-mentions Rust?"* or *"start tracking Home Depot and Nike"*.
+Use an absolute path: GUI apps don't share your shell's `PATH`. Claude on the
+web (claude.ai) cannot use local tools such as this one.
+
+Then ask Claude things like *"anything new at Stripe or Linear that mentions
+Rust?"*, *"start tracking Ramp and DoorDash"*, *"AI engineer jobs at my
+companies posted this week"* or *"what was posted yesterday?"*.
 
 Tools exposed: `search_jobs`, `new_jobs`, `list_companies`, `add_company`,
 `remove_company`, `list_queries`, `add_query`, `remove_query`,
@@ -203,7 +253,7 @@ resources (`jobscout://bundle/<name>`, `jobscout://config`).
 
 Each `run` with new postings writes two files into `~/.jobscout/bundles/`:
 
-- `<timestamp>.md`, grouped by board, ready to read or paste anywhere;
+- `<timestamp>.md`, grouped by source, ready to read or paste anywhere;
 - `<timestamp>.json`, the same postings as structured data for other tools.
 
 ### Sources
@@ -225,15 +275,28 @@ and one line in `sources::all()`.
 
 - `src/json.rs`: recursive-descent JSON parser and pretty-printer.
 - `src/html.rs`: entity decoding, tag stripping, RSS element extraction.
-- `src/time.rs`: civil-date arithmetic, ISO-8601 and RFC 2822 parsing.
+- `src/time.rs`: civil-date arithmetic, ISO-8601 and RFC 2822 parsing, local
+  calendar days for `--on`.
+- `src/filter.rs`: whole-word keyword, exclude, age and location filtering.
+- `src/location.rs`: countries, cities, US states and regions in free-form
+  location text, and whether a posting is open to the user's country.
+- `src/sources/companies.rs`: the job-system adapters (Greenhouse, Lever,
+  Ashby, Workable, SmartRecruiters, Phenom, Workday, TikTok) and detection.
+- `src/sources/schema.rs`: the schema.org JobPosting reader (sitemaps,
+  robots.txt, JSON-LD, page cache).
+- `src/scout.rs`: the engine shared by the CLI (`src/main.rs`) and the MCP
+  server (`src/mcp.rs`).
 - `src/http.rs`: the one deliberate exception to "from scratch". A TLS stack
   is not something to hand-roll, so HTTPS is delegated to the system `curl`
   binary. It is a single function, easy to swap later.
-- `src/store.rs`: memory of seen postings, written atomically.
+- `src/store.rs`: memory of seen postings. It and the config are written
+  atomically (temp file + rename).
 
 ## Releasing
 
-1. Bump `version` in `Cargo.toml`, commit, then `git tag vX.Y.Z && git push --tags`.
+1. Bump `version` in `Cargo.toml`, run `cargo build` so `Cargo.lock` follows,
+   commit both, then `git tag -a vX.Y.Z -m "jobscout vX.Y.Z"` and push the
+   branch and the tag.
 2. CI creates the GitHub release and attaches binaries for four targets. Its
    `create-release` job log prints the `url` and `sha256` lines for the
    formula.
@@ -245,5 +308,8 @@ and one line in `sources::all()`.
 ```sh
 cargo test
 cargo run -- search rust --limit 10
-JOBSCOUT_HOME=/tmp/js cargo run -- run --dry-run
+JOBSCOUT_HOME=/tmp/js cargo run -- run --dry-run   # a throwaway data dir
 ```
+
+No third-party crates: everything is built on the standard library, and HTTPS
+goes through the system `curl`. Keep `[dependencies]` empty.
