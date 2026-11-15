@@ -463,8 +463,25 @@ fn smartrecruiters(c: &Company, max: usize) -> Result<Listing, String> {
 
 /// Phenom careers sites (jobs.<company>.com) expose the search their own
 /// page uses: POST /widgets with `ddoKey: refineSearch`.
+/// A Phenom site's locale path ("us/en", "global/en"), read from where its
+/// home page redirects. Job pages live at `https://<site>/<prefix>/job/<id>`.
+fn phenom_prefix(slug: &str) -> Option<String> {
+    let end = http::final_url(&format!("https://{}/", slug)).ok()?;
+    phenom_prefix_from(&end)
+}
+
+fn phenom_prefix_from(final_url: &str) -> Option<String> {
+    let path = final_url.split("://").nth(1)?.split_once('/')?.1;
+    let parts: Vec<&str> = path.split(['/', '?', '#']).filter(|p| !p.is_empty()).take(2).collect();
+    let localeish = |s: &str| (s.len() == 2 || s == "global") && s.chars().all(|c| c.is_ascii_lowercase());
+    (parts.len() == 2 && localeish(parts[0]) && localeish(parts[1])).then(|| format!("{}/{}", parts[0], parts[1]))
+}
+
 fn phenom(c: &Company, queries: &[String], max: usize) -> Result<Listing, String> {
     let url = format!("https://{}/widgets", c.slug);
+    // Link to the company's own job page: the Workday/Taleo page behind it
+    // (applyUrl) is often shown as "page does not exist" when opened directly.
+    let prefix = phenom_prefix(&c.slug);
     let searches: Vec<String> = if queries.is_empty() { vec![String::new()] } else { queries.to_vec() };
     let mut jobs = Vec::new();
     let mut seen = HashSet::new();
@@ -531,11 +548,13 @@ fn phenom(c: &Company, queries: &[String], max: usize) -> Result<Listing, String
                 }
                 let remote = it.str_of("remote");
                 j.remote = remote.to_lowercase() == "remote" || looks_remote(&j.location) || looks_remote(&j.title);
-                // applyUrl usually points at the underlying ATS job page with
-                // an `/apply` suffix; link to the page itself.
-                j.url = it.str_of("applyUrl").trim_end_matches('/').trim_end_matches("/apply").to_string();
+                j.url = match &prefix {
+                    Some(p) => format!("https://{}/{}/job/{}", c.slug, p, id),
+                    // No locale path found: fall back to the ATS page.
+                    None => it.str_of("applyUrl").trim_end_matches('/').trim_end_matches("/apply").to_string(),
+                };
                 if j.url.is_empty() {
-                    j.url = format!("https://{}/job/{}", c.slug, it.str_of("jobSeqNo"));
+                    j.url = format!("https://{}/job/{}", c.slug, id);
                 }
                 j.set_posted_iso(&it.str_of("postedDate"));
                 for v in [it.str_of("category"), it.str_of("type"), remote] {
@@ -636,6 +655,14 @@ fn workday_age_days(s: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn phenom_locale_prefix() {
+        assert_eq!(phenom_prefix_from("https://jobs.cvshealth.com/us/en/home").as_deref(), Some("us/en"));
+        assert_eq!(phenom_prefix_from("https://careers.example.com/global/en").as_deref(), Some("global/en"));
+        assert_eq!(phenom_prefix_from("https://careers.example.com/").as_deref(), None);
+        assert_eq!(phenom_prefix_from("https://careers.example.com/search-results").as_deref(), None);
+    }
 
     #[test]
     fn url_detection() {

@@ -54,6 +54,18 @@ fn run_curl(url: &str, json_body: Option<&str>) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
+/// Follow redirects from `url` and return where it ends up.
+pub fn final_url(url: &str) -> Result<String, String> {
+    let out = Command::new("curl")
+        .args(["--silent", "--show-error", "--location", "--max-time", "30", "--user-agent", USER_AGENT, "--output", "/dev/null", "--write-out", "%{url_effective}", "--", url])
+        .output()
+        .map_err(|e| format!("could not run curl: {}", e))?;
+    if !out.status.success() {
+        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
 /// Percent-encode a query-string value.
 pub fn url_encode(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
