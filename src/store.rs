@@ -52,8 +52,6 @@ impl Seen {
         let obj = Json::Obj(entries.into_iter().map(|(k, v)| (k.clone(), Json::Str(v.clone()))).collect());
         let mut root = Json::obj();
         root.set("seen", obj);
-        let tmp = self.path.with_extension("json.tmp");
-        fs::write(&tmp, root.to_pretty()).map_err(|e| format!("write {}: {}", tmp.display(), e))?;
-        fs::rename(&tmp, &self.path).map_err(|e| format!("rename {}: {}", self.path.display(), e))
+        crate::config::write_atomic(&self.path, &root.to_pretty())
     }
 }

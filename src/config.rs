@@ -172,9 +172,20 @@ impl Config {
     pub fn save(&self) -> Result<PathBuf, String> {
         let path = self.config_path();
         fs::create_dir_all(&self.home).map_err(|e| format!("create {}: {}", self.home.display(), e))?;
-        fs::write(&path, self.to_json().to_pretty()).map_err(|e| format!("write {}: {}", path.display(), e))?;
+        write_atomic(&path, &self.to_json().to_pretty())?;
         Ok(path)
     }
+}
+
+/// Write via a temporary file and rename, so a reader (or a second jobscout
+/// running at the same time) never sees a half-written file.
+pub fn write_atomic(path: &Path, contents: &str) -> Result<(), String> {
+    let tmp = path.with_extension(format!("tmp.{}", std::process::id()));
+    fs::write(&tmp, contents).map_err(|e| format!("write {}: {}", tmp.display(), e))?;
+    fs::rename(&tmp, path).map_err(|e| {
+        let _ = fs::remove_file(&tmp);
+        format!("write {}: {}", path.display(), e)
+    })
 }
 
 #[cfg(test)]

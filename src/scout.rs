@@ -218,6 +218,13 @@ impl Phrases {
     }
 }
 
+/// Case-insensitive for every script ("INGÉNIEUR" = "ingénieur"), ignoring
+/// extra spaces.
+fn same_phrase(a: &str, b: &str) -> bool {
+    let norm = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
+    norm(a) == norm(b)
+}
+
 /// Returns false when the phrase was already present.
 pub fn add_phrase(cfg: &mut Config, which: Phrases, phrase: &str) -> Result<bool, String> {
     let phrase = phrase.trim();
@@ -225,7 +232,7 @@ pub fn add_phrase(cfg: &mut Config, which: Phrases, phrase: &str) -> Result<bool
         return Err("phrase must not be empty".into());
     }
     let list = which.list(cfg);
-    if list.iter().any(|q| q.eq_ignore_ascii_case(phrase)) {
+    if list.iter().any(|q| same_phrase(q, phrase)) {
         return Ok(false);
     }
     list.push(phrase.to_string());
@@ -238,7 +245,7 @@ pub fn remove_phrase(cfg: &mut Config, which: Phrases, phrase: &str) -> Result<b
     let phrase = phrase.trim();
     let list = which.list(cfg);
     let before = list.len();
-    list.retain(|q| !q.eq_ignore_ascii_case(phrase));
+    list.retain(|q| !same_phrase(q, phrase));
     let removed = list.len() != before;
     if removed {
         cfg.save()?;
