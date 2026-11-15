@@ -71,7 +71,17 @@ jobscout sources              # list boards and whether they are enabled
 jobscout forget               # clear memory of seen postings
 ```
 
-Useful flags: `--source NAME` (repeatable), `--remote`, `--limit N`, `--json`.
+Useful flags: `--source NAME` (repeatable), `--remote`, `--limit N`, `--json`,
+`--since DUR`.
+
+```sh
+jobscout search --since 24h                 # everything posted in the last day
+jobscout search --since 24h -s companies    # only your tracked companies, last day
+jobscout run --since 3d                     # new postings from the last 3 days
+```
+
+`--since` applies to every source, tracked companies included, and leaves out
+postings that carry no date.
 
 ### Config
 

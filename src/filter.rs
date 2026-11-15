@@ -9,6 +9,9 @@ pub struct Filter {
     pub exclude: Vec<String>,
     pub remote_only: bool,
     pub max_age_days: u64,
+    /// Explicit window asked for on this call; applies to every posting,
+    /// and an undated posting cannot be shown to be inside it.
+    pub since_secs: Option<u64>,
 }
 
 impl Filter {
@@ -18,12 +21,19 @@ impl Filter {
             exclude: cfg.exclude.iter().map(|q| q.to_lowercase()).collect(),
             remote_only: cfg.remote_only,
             max_age_days: cfg.max_age_days,
+            since_secs: cfg.since_secs,
         }
     }
 
     pub fn keep(&self, job: &Job, now: i64) -> bool {
         if self.remote_only && !job.remote {
             return false;
+        }
+        if let Some(win) = self.since_secs {
+            match job.posted_unix {
+                Some(posted) if now - posted <= win as i64 => {}
+                _ => return false,
+            }
         }
         // A tracked company's board lists only open roles, and a role opened
         // months ago is still worth seeing; the age limit is for job boards.
@@ -91,7 +101,23 @@ mod tests {
             exclude: ex.iter().map(|s| s.to_string()).collect(),
             remote_only: false,
             max_age_days: 7,
+            since_secs: None,
         }
+    }
+
+    #[test]
+    fn since_window_applies_to_tracked_too() {
+        let mut f = filter(&[], &[]);
+        f.since_secs = Some(86_400);
+        let mut fresh = job("New role", false, 0);
+        fresh.tracked = true;
+        let mut old = job("Old role", false, 3);
+        old.tracked = true;
+        let mut undated = Job::new("test", "u");
+        undated.title = "No date".into();
+        assert!(f.keep(&fresh, 1_000_000));
+        assert!(!f.keep(&old, 1_000_000));
+        assert!(!f.keep(&undated, 1_000_000));
     }
 
     #[test]

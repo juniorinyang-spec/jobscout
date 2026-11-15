@@ -187,6 +187,13 @@ fn tool(name: &str, desc: &str, props: &[Prop]) -> Json {
 
 const SOURCES_DESC: &str = "Restrict to these sources: remoteok, remotive, arbeitnow, weworkremotely, hackernews, companies. Default: all enabled.";
 
+const SINCE_DESC: &str = "Only postings published within this many hours (e.g. 24 for 'today', 168 for 'this week'). Unlike max_age_days this also applies to tracked companies; postings without a date are left out.";
+
+/// `posted_within_hours` -> seconds, if given and positive.
+fn since_arg(args: &Json) -> Option<u64> {
+    args.num_of("posted_within_hours").filter(|h| *h > 0.0).map(|h| (h * 3600.0).round() as u64)
+}
+
 fn tools_list() -> Json {
     let tools = vec![
         tool(
@@ -196,6 +203,7 @@ fn tools_list() -> Json {
                 p("query", "string", "Words that must all appear (whole-word, case-insensitive) in the title, company, location, tags or summary. Omit to use the user's configured queries."),
                 p("remote_only", "boolean", "Only remote postings."),
                 p("max_age_days", "integer", "Ignore job-board postings older than this many days (default from config, usually 14; 0 = no limit). Tracked companies' open roles are never age-filtered."),
+                p("posted_within_hours", "number", SINCE_DESC),
                 p("sources", "string[]", SOURCES_DESC),
                 p("limit", "integer", "Maximum postings to return (default 25)."),
                 p("format", "string", "'text' (default) or 'json' for structured records."),
@@ -206,6 +214,7 @@ fn tools_list() -> Json {
             "Run the scout: fetch everything, apply the configured queries, and return only postings never shown before. Writes a bundle and remembers them unless dry_run is true.",
             &[
                 p("dry_run", "boolean", "Preview without writing a bundle or updating memory (default false)."),
+                p("posted_within_hours", "number", SINCE_DESC),
                 p("sources", "string[]", SOURCES_DESC),
                 p("limit", "integer", "Maximum postings to return; with dry_run false only these are remembered."),
             ],
@@ -289,6 +298,7 @@ fn run_tool(name: &str, args: &Json) -> Result<String, String> {
             if let Some(d) = int_arg(args, "max_age_days") {
                 cfg.max_age_days = d as u64;
             }
+            cfg.since_secs = since_arg(args);
             let only = args.strings_of("sources");
             let limit = int_arg(args, "limit").unwrap_or(25).max(1);
             let jobs = scout::search(&cfg, &only, limit, true)?;
@@ -303,6 +313,7 @@ fn run_tool(name: &str, args: &Json) -> Result<String, String> {
         "new_jobs" => {
             let only = args.strings_of("sources");
             let dry = args.bool_of("dry_run").unwrap_or(false);
+            cfg.since_secs = since_arg(args);
             let out = scout::run(&cfg, &only, int_arg(args, "limit"), dry, true)?;
             let mut text = format!(
                 "{} fetched, {} matched the queries ({}), {}{}.\n",

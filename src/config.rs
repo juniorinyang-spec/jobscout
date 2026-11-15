@@ -48,6 +48,10 @@ pub struct Config {
     pub sources: Vec<String>,
     pub companies: Vec<Company>,
     pub max_per_source: usize,
+    /// Per-invocation window (`--since 24h`, MCP `posted_within_hours`):
+    /// keep only postings dated within this many seconds, tracked companies
+    /// included. Never saved to the config file.
+    pub since_secs: Option<u64>,
 }
 
 pub fn home_dir() -> PathBuf {
@@ -84,6 +88,7 @@ impl Config {
             sources: ALL_SOURCES.iter().map(|s| s.to_string()).collect(),
             companies: vec![],
             max_per_source: 500,
+            since_secs: None,
         }
     }
 
@@ -128,6 +133,7 @@ impl Config {
             sources,
             companies,
             max_per_source: v.num_of("max_per_source").map(|n| n.max(1.0) as usize).unwrap_or(d.max_per_source),
+            since_secs: None,
         }
     }
 

@@ -61,6 +61,8 @@ OPTIONS
   -n, --limit N        Max postings to print (search: 50). With `run`, only
                        the N shown are remembered; the rest stay new.
   -r, --remote         Remote postings only
+      --since DUR      Only postings from the last DUR (24h, 3d), tracked
+                       companies included; undated postings are left out
       --every DUR      watch interval: 90s, 30m, 2h, 1d
       --dry-run        run: print new postings but write nothing
       --json           Print postings as JSON instead of text
@@ -77,6 +79,7 @@ struct Args {
     sources: Vec<String>,
     limit: Option<usize>,
     every: Option<u64>,
+    since: Option<u64>,
     json: bool,
     dry_run: bool,
     remote: bool,
@@ -99,6 +102,10 @@ fn parse_args() -> Result<Args, String> {
             "--every" => {
                 let v = value(arg)?;
                 a.every = Some(time::parse_duration(&v).ok_or_else(|| format!("bad duration '{}'", v))?);
+            }
+            "--since" => {
+                let v = value(arg)?;
+                a.since = Some(time::parse_duration(&v).ok_or_else(|| format!("bad duration '{}' (try 24h, 3d, 90m)", v))?);
             }
             "--json" => a.json = true,
             "--dry-run" | "--dry" => a.dry_run = true,
@@ -197,6 +204,7 @@ fn cmd_search(a: &Args) -> Result<(), String> {
     if a.remote {
         cfg.remote_only = true;
     }
+    cfg.since_secs = a.since;
     if !a.words.is_empty() {
         cfg.queries = vec![a.words.join(" ")];
     }
@@ -213,6 +221,7 @@ fn cmd_run(a: &Args) -> Result<(), String> {
     if a.remote {
         cfg.remote_only = true;
     }
+    cfg.since_secs = a.since;
     let out = scout::run(&cfg, &a.sources, a.limit, a.dry_run, a.quiet)?;
     output(&out.new, a.json);
     if let Some(b) = &out.bundle {
