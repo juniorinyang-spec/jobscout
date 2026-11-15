@@ -258,7 +258,7 @@ fn tools_list() -> Json {
         tool("list_companies", "List the companies jobscout tracks, with the ATS and board slug for each.", &[]),
         tool(
             "add_company",
-            "Track a company. Accepts a company name (probes Greenhouse, Lever, Ashby, Workable, SmartRecruiters) or a careers URL (also Phenom sites and Workday boards). Reports the board's open-role count.",
+            "Track a company. Accepts a company name (probes Greenhouse, Lever, Ashby, Workable, SmartRecruiters; also 'tiktok') or a careers URL (also Phenom sites, Workday boards, and any careers site publishing schema.org JobPosting data). Reports the board's open-role count.",
             &[req("input", "string", "Company name or careers page URL.")],
         ),
         tool("remove_company", "Stop tracking a company.", &[req("name", "string", "Company name or slug as shown by list_companies.")]),
@@ -351,6 +351,10 @@ fn run_tool(name: &str, args: &Json) -> Result<String, String> {
             }
             cfg.since_secs = since_arg(args);
             cfg.on_day = on_arg(args)?;
+            // Answer within an MCP client's patience: read few new pages of
+            // schema.org sites per call; later calls read more.
+            cfg.quiet = true;
+            cfg.crawl_pages = Some(40);
             if let Some(l) = location_arg(args)? {
                 cfg.location = l;
             }
@@ -370,6 +374,10 @@ fn run_tool(name: &str, args: &Json) -> Result<String, String> {
             let dry = args.bool_of("dry_run").unwrap_or(false);
             cfg.since_secs = since_arg(args);
             cfg.on_day = on_arg(args)?;
+            // Answer within an MCP client's patience: read few new pages of
+            // schema.org sites per call; later calls read more.
+            cfg.quiet = true;
+            cfg.crawl_pages = Some(40);
             if let Some(l) = location_arg(args)? {
                 cfg.location = l;
             }

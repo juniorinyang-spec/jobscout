@@ -8,6 +8,7 @@ pub mod arbeitnow;
 pub mod companies;
 pub mod remoteok;
 pub mod remotive;
+pub mod schema;
 pub mod weworkremotely;
 
 pub trait Source {

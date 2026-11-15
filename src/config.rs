@@ -58,6 +58,11 @@ pub struct Config {
     /// Per-invocation calendar day (`--on 2026-11-13`, MCP `posted_on`):
     /// [start, end) unix seconds. Never saved.
     pub on_day: Option<(i64, i64)>,
+    /// Per-invocation: new schema.org job pages to read per company (None =
+    /// the default). MCP calls use a small budget to answer quickly.
+    pub crawl_pages: Option<usize>,
+    /// Per-invocation: suppress progress messages.
+    pub quiet: bool,
 }
 
 pub fn home_dir() -> PathBuf {
@@ -99,6 +104,8 @@ impl Config {
             location: String::new(),
             since_secs: None,
             on_day: None,
+            crawl_pages: None,
+            quiet: false,
         }
     }
 
@@ -149,6 +156,8 @@ impl Config {
             },
             since_secs: None,
             on_day: None,
+            crawl_pages: None,
+            quiet: false,
         }
     }
 

@@ -43,7 +43,8 @@ COMMANDS
   sources              List available job boards
   company add X...     Track a company by name or careers URL (ATS auto-detected:
                        Greenhouse, Lever, Ashby, Workable, SmartRecruiters,
-                       Phenom sites, Workday boards, TikTok). Their open roles are
+                       Phenom sites, Workday boards, TikTok, or any careers
+                       site with schema.org job data). Their open roles are
                        shown however old; max_age_days applies to boards only.
   company list         Show tracked companies
   company remove X     Stop tracking a company
@@ -240,6 +241,7 @@ fn cmd_search(a: &Args) -> Result<(), String> {
     }
     cfg.since_secs = a.since;
     cfg.on_day = a.on;
+    cfg.quiet = a.quiet;
     if let Some(l) = &a.location {
         cfg.location = l.clone();
     }
@@ -261,6 +263,7 @@ fn cmd_run(a: &Args) -> Result<(), String> {
     }
     cfg.since_secs = a.since;
     cfg.on_day = a.on;
+    cfg.quiet = a.quiet;
     if let Some(l) = &a.location {
         cfg.location = l.clone();
     }

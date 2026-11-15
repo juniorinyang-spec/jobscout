@@ -2,14 +2,15 @@
 //! or careers-site platform. Each exposes a JSON list of open roles, so
 //! tracking a company is one entry in `config.companies`.
 //!
-//! Two kinds of platform:
+//! Kinds of platform:
 //! - slug-addressed boards (Greenhouse, Lever, Ashby, Workable,
 //!   SmartRecruiters): a company name is enough, we probe each one;
 //! - site-addressed platforms (Phenom, Workday): the company's own careers
 //!   domain hosts a search API, so the user pastes the careers URL and we
-//!   fingerprint the page.
-//!
-//! - company-specific sites with a public JSON search (TikTok).
+//!   fingerprint the page;
+//! - company-specific sites with a public JSON search (TikTok);
+//! - any other careers site that publishes schema.org JobPosting data
+//!   (see `schema.rs`), found through its links and sitemaps.
 //!
 //! `detect` turns what a user typed into a `Company` either way.
 
@@ -44,7 +45,7 @@ impl Source for Companies {
         "companies"
     }
     fn describe(&self) -> &'static str {
-        "companies you track (Greenhouse, Lever, Ashby, Workable, SmartRecruiters, Phenom, Workday, TikTok)"
+        "companies you track (Greenhouse, Lever, Ashby, Workable, SmartRecruiters, Phenom, Workday, TikTok, schema.org careers sites)"
     }
     fn unconfigured(&self, cfg: &Config) -> Option<&'static str> {
         cfg.companies.is_empty().then_some("no companies yet; try `jobscout company add <name or url>`")
@@ -59,8 +60,19 @@ impl Source for Companies {
         let mut seen_req: HashSet<String> = HashSet::new();
         // The cap applies per company; a large employer must not crowd out
         // the others.
+        let cache = cfg.home.join("cache");
         for c in &cfg.companies {
-            match fetch_company(c, &cfg.queries, cfg.max_per_source) {
+            let got = if c.ats == "schema" {
+                super::schema::fetch(c, cfg.max_per_source, Some(&cache), cfg.quiet, cfg.crawl_pages).map(|f| {
+                    if f.pending > 0 && !cfg.quiet {
+                        eprintln!("  {}: {} more job pages will be read on the next run", c.name, f.pending);
+                    }
+                    Listing { jobs: f.jobs, total: f.total }
+                })
+            } else {
+                fetch_company(c, &cfg.queries, cfg.max_per_source)
+            };
+            match got {
                 Ok(l) => {
                     for mut j in l.jobs {
                         j.tracked = true;
@@ -96,6 +108,8 @@ pub fn fetch_company(c: &Company, queries: &[String], max: usize) -> Result<List
         "phenom" => phenom(c, queries, max),
         "workday" => workday(c, queries, max),
         "tiktok" => tiktok(c, queries, max),
+        // Uncached sample; tracked runs go through `schema::fetch` with a cache.
+        "schema" => super::schema::fetch(c, max, None, true, None).map(|f| Listing { jobs: f.jobs, total: f.total }),
         other => Err(format!("unknown ats '{}'", other)),
     }
 }
@@ -163,10 +177,15 @@ fn detect_site(url: &str) -> Result<(Company, usize), String> {
     })?;
     let lower = page.to_lowercase();
 
+    // A Phenom site whose search API answers; if it does not (some
+    // deployments differ), fall through to the other readers below.
+    let mut phenom_err = None;
     if lower.contains("ddokey") || lower.contains("phenom") {
         let c = Company { name: display_name(&host), ats: "phenom".into(), slug: host.clone() };
-        let l = fetch_company(&c, &[], 100).map_err(|e| format!("{} looks like a Phenom site but its search API did not answer: {}", host, e))?;
-        return Ok((c, l.total));
+        match fetch_company(&c, &[], 100) {
+            Ok(l) => return Ok((c, l.total)),
+            Err(e) => phenom_err = Some(e),
+        }
     }
     // A page that merely links to a Workday board: follow that instead.
     if let Some(pos) = lower.find(".myworkdayjobs.com/") {
@@ -178,13 +197,22 @@ fn detect_site(url: &str) -> Result<(Company, usize), String> {
             return Ok((c, l.total));
         }
     }
+    // Any other site: does it publish schema.org JobPosting pages?
+    let c = Company { name: display_name(&host), ats: "schema".into(), slug: url.trim().to_string() };
+    if let Ok(found) = super::schema::fetch(&c, 100, None, true, None) {
+        if !found.jobs.is_empty() {
+            return Ok((c, found.total));
+        }
+    }
     let hint = if lower.contains("just a moment") || lower.contains("challenges.cloudflare.com") {
-        " The site answered with a bot-protection challenge, so it cannot be read without a browser."
+        " The site answered with a bot-protection challenge, so it cannot be read without a browser.".to_string()
+    } else if let Some(e) = phenom_err {
+        format!(" It looks like a Phenom site, but its search API did not answer ({}).", html::truncate(&e, 80))
     } else {
-        ""
+        String::new()
     };
     Err(format!(
-        "{} is not on a platform jobscout understands ({}, {}).{} Paste the URL of the job search page itself if this was a landing page.",
+        "{} is not on a platform jobscout understands ({}, {}) and publishes no schema.org job data it could find.{} Paste the URL of the job search page itself if this was a landing page; sites that build their job list in the browser (most big-tech careers sites) cannot be read.",
         host,
         SLUG_ATS.join(", "),
         SITE_ATS.join(", "),
@@ -202,16 +230,25 @@ fn host_of(url: &str) -> Option<String> {
     }
 }
 
-/// `jobs.cvshealth.com` -> `cvshealth`; `acme.wd1.myworkdayjobs.com/Careers` -> `acme`.
+/// `jobs.cvshealth.com` -> `cvshealth`; `explore.jobs.netflix.net` ->
+/// `netflix`; `acme.wd1.myworkdayjobs.com/Careers` -> `acme`.
 fn display_name(slug: &str) -> String {
-    let host = slug.split('/').next().unwrap_or(slug);
-    if host.contains('.') {
-        let labels: Vec<&str> = host.split('.').collect();
-        let generic = ["jobs", "careers", "career", "www", "apply", "work", "join", "talent"];
-        labels.iter().find(|l| !generic.contains(&l.to_lowercase().as_str())).map(|s| s.to_string()).unwrap_or_else(|| host.to_string())
-    } else {
-        slug.to_string()
+    let s = slug.split_once("://").map(|(_, r)| r).unwrap_or(slug);
+    let host = s.split(['/', '?', '#']).next().unwrap_or(s).to_lowercase();
+    if !host.contains('.') {
+        return slug.to_string();
     }
+    let labels: Vec<&str> = host.split('.').collect();
+    // Platforms that put the company in the first label.
+    if host.ends_with(".myworkdayjobs.com") || host.ends_with(".workable.com") {
+        return labels[0].to_string();
+    }
+    // Otherwise the registrable domain: the label before the TLD, or before
+    // a two-part suffix such as .co.uk / .com.au.
+    let n = labels.len();
+    let second_level = ["co", "com", "org", "net", "ac", "gov", "edu"];
+    let i = if n >= 3 && labels[n - 1].len() == 2 && second_level.contains(&labels[n - 2]) { n - 3 } else { n.saturating_sub(2) };
+    labels[i].to_string()
 }
 
 /// Recognise an ATS-hosted careers URL and pull the board slug out of it.
@@ -763,6 +800,17 @@ fn workday_age_days(s: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn display_names() {
+        assert_eq!(display_name("jobs.cvshealth.com"), "cvshealth");
+        assert_eq!(display_name("https://explore.jobs.netflix.net/careers"), "netflix");
+        assert_eq!(display_name("join.disneycareers.com"), "disneycareers");
+        assert_eq!(display_name("nvidia.wd5.myworkdayjobs.com/NVIDIAExternalCareerSite"), "nvidia");
+        assert_eq!(display_name("https://careers.acme.co.uk/jobs"), "acme");
+        assert_eq!(display_name("https://www.ycombinator.com/jobs"), "ycombinator");
+        assert_eq!(display_name("stripe"), "stripe");
+    }
 
     #[test]
     fn tiktok_ids_and_urls() {

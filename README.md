@@ -149,6 +149,17 @@ Over MCP the same filters are `posted_within_hours` and `posted_on`.
     page that merely links to a Workday board is followed to it.
   - Large catalogues (Phenom, Workday) are searched server-side with your
     queries rather than downloaded whole.
+  - **Any other careers site that publishes schema.org `JobPosting` data**
+    (the structured data Google for Jobs reads), for example
+    `jobscout company add https://careers.marriott.com/`. jobscout finds job
+    pages through the site's links and sitemaps (respecting robots.txt),
+    reads each page's JobPosting once and caches it in `~/.jobscout/cache/`,
+    and drops postings that leave the sitemap or pass their `validThrough`
+    date. To stay polite it reads at most 120 new pages per company per run
+    (newest first), 2 at a time, so a large site fills in over a few runs;
+    through MCP it reads 40 per call to answer quickly. Sites that build their
+    job list in the browser with no structured data (Amazon, Google, Apple,
+    Meta, Microsoft) cannot be read this way.
   - **TikTok** (`jobscout company add tiktok`) runs its own careers site,
     which jobscout reads through its public search. TikTok gives no posting
     dates; jobscout reads the creation time built into each posting id.
@@ -205,7 +216,7 @@ Only `companies` is on by default; turn boards on with `jobscout source on NAME`
 | `remotive`       | remotive.com API, searched per query                     |
 | `arbeitnow`      | arbeitnow.com API (Europe-heavy, remote + on-site)       |
 | `weworkremotely` | weworkremotely.com RSS                                   |
-| `companies`      | companies you track: on Greenhouse, Lever, Ashby, Workable, SmartRecruiters, Phenom or Workday, plus TikTok |
+| `companies`      | companies you track: on Greenhouse, Lever, Ashby, Workable, SmartRecruiters, Phenom or Workday, TikTok, or any careers site with schema.org JobPosting data |
 
 Adding a board is one file in `src/sources/` implementing the `Source` trait
 and one line in `sources::all()`.
