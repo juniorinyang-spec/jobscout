@@ -52,6 +52,9 @@ pub struct Config {
     /// keep only postings dated within this many seconds, tracked companies
     /// included. Never saved to the config file.
     pub since_secs: Option<u64>,
+    /// Per-invocation calendar day (`--on 2026-11-13`, MCP `posted_on`):
+    /// [start, end) unix seconds. Never saved.
+    pub on_day: Option<(i64, i64)>,
 }
 
 pub fn home_dir() -> PathBuf {
@@ -89,6 +92,7 @@ impl Config {
             companies: vec![],
             max_per_source: 500,
             since_secs: None,
+            on_day: None,
         }
     }
 
@@ -134,6 +138,7 @@ impl Config {
             companies,
             max_per_source: v.num_of("max_per_source").map(|n| n.max(1.0) as usize).unwrap_or(d.max_per_source),
             since_secs: None,
+            on_day: None,
         }
     }
 

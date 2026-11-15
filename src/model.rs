@@ -63,7 +63,7 @@ impl Job {
 
     pub fn posted_date(&self) -> String {
         match self.posted_unix {
-            Some(s) => time::unix_to_date(s),
+            Some(s) => time::unix_to_local_date(s),
             None => self.posted.chars().take(10).collect(),
         }
     }

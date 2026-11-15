@@ -12,6 +12,8 @@ pub struct Filter {
     /// Explicit window asked for on this call; applies to every posting,
     /// and an undated posting cannot be shown to be inside it.
     pub since_secs: Option<u64>,
+    /// Explicit calendar day [start, end); same rules as `since_secs`.
+    pub on_day: Option<(i64, i64)>,
 }
 
 impl Filter {
@@ -22,6 +24,7 @@ impl Filter {
             remote_only: cfg.remote_only,
             max_age_days: cfg.max_age_days,
             since_secs: cfg.since_secs,
+            on_day: cfg.on_day,
         }
     }
 
@@ -35,9 +38,17 @@ impl Filter {
                 _ => return false,
             }
         }
+        if let Some((start, end)) = self.on_day {
+            match job.posted_unix {
+                Some(posted) if posted >= start && posted < end => {}
+                _ => return false,
+            }
+        }
         // A tracked company's board lists only open roles, and a role opened
         // months ago is still worth seeing; the age limit is for job boards.
-        if self.max_age_days > 0 && !job.tracked {
+        // An explicit --since / --on window replaces it.
+        let explicit = self.since_secs.is_some() || self.on_day.is_some();
+        if self.max_age_days > 0 && !job.tracked && !explicit {
             if let Some(posted) = job.posted_unix {
                 if now - posted > (self.max_age_days as i64) * 86_400 {
                     return false;
@@ -102,6 +113,7 @@ mod tests {
             remote_only: false,
             max_age_days: 7,
             since_secs: None,
+            on_day: None,
         }
     }
 
@@ -118,6 +130,23 @@ mod tests {
         assert!(f.keep(&fresh, 1_000_000));
         assert!(!f.keep(&old, 1_000_000));
         assert!(!f.keep(&undated, 1_000_000));
+    }
+
+    #[test]
+    fn on_day_window() {
+        let mut f = filter(&[], &[]);
+        // job(age 2) is posted at 1_000_000 - 2 days.
+        let start = 1_000_000 - 2 * 86_400;
+        f.on_day = Some((start, start + 86_400));
+        let mut j = job("Two days ago", false, 2);
+        j.tracked = true;
+        assert!(f.keep(&j, 1_000_000));
+        assert!(!f.keep(&job("Yesterday", false, 1), 1_000_000));
+        assert!(!f.keep(&job("Three days ago", false, 3), 1_000_000));
+        // Older than max_age_days but on the asked-for day: still shown.
+        let start = 1_000_000 - 30 * 86_400;
+        f.on_day = Some((start, start + 86_400));
+        assert!(f.keep(&job("A month ago", false, 30), 1_000_000));
     }
 
     #[test]

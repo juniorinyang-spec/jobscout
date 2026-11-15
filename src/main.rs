@@ -63,6 +63,8 @@ OPTIONS
   -r, --remote         Remote postings only
       --since DUR      Only postings from the last DUR (24h, 3d), tracked
                        companies included; undated postings are left out
+      --on DAY         Only postings from that local calendar day: 2026-11-13,
+                       today, yesterday, or a weekday (friday = the latest one)
       --every DUR      watch interval: 90s, 30m, 2h, 1d
       --dry-run        run: print new postings but write nothing
       --json           Print postings as JSON instead of text
@@ -80,6 +82,7 @@ struct Args {
     limit: Option<usize>,
     every: Option<u64>,
     since: Option<u64>,
+    on: Option<(i64, i64)>,
     json: bool,
     dry_run: bool,
     remote: bool,
@@ -106,6 +109,13 @@ fn parse_args() -> Result<Args, String> {
             "--since" => {
                 let v = value(arg)?;
                 a.since = Some(time::parse_duration(&v).ok_or_else(|| format!("bad duration '{}' (try 24h, 3d, 90m)", v))?);
+            }
+            "--on" => {
+                let v = value(arg)?;
+                a.on = Some(
+                    time::parse_day(&v, time::now_unix(), time::local_offset_secs())
+                        .ok_or_else(|| format!("bad date '{}' (try 2026-11-13, yesterday, friday)", v))?,
+                );
             }
             "--json" => a.json = true,
             "--dry-run" | "--dry" => a.dry_run = true,
@@ -205,6 +215,7 @@ fn cmd_search(a: &Args) -> Result<(), String> {
         cfg.remote_only = true;
     }
     cfg.since_secs = a.since;
+    cfg.on_day = a.on;
     if !a.words.is_empty() {
         cfg.queries = vec![a.words.join(" ")];
     }
@@ -222,6 +233,7 @@ fn cmd_run(a: &Args) -> Result<(), String> {
         cfg.remote_only = true;
     }
     cfg.since_secs = a.since;
+    cfg.on_day = a.on;
     let out = scout::run(&cfg, &a.sources, a.limit, a.dry_run, a.quiet)?;
     output(&out.new, a.json);
     if let Some(b) = &out.bundle {

@@ -104,6 +104,61 @@ fn parse_offset(s: &str) -> Option<i64> {
     Some(sign * (hh * 3600 + mm * 60))
 }
 
+/// This machine's current UTC offset in seconds (east positive), from
+/// `date +%z`, which honours `TZ`. Falls back to UTC.
+/// Looked up once per process.
+pub fn local_offset_secs() -> i64 {
+    static OFFSET: std::sync::OnceLock<i64> = std::sync::OnceLock::new();
+    *OFFSET.get_or_init(|| {
+        std::process::Command::new("date")
+            .arg("+%z")
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .and_then(|s| parse_offset(s.trim()))
+            .unwrap_or(0)
+    })
+}
+
+/// Calendar date in local time, matching what `--on` means by a day.
+pub fn unix_to_local_date(secs: i64) -> String {
+    unix_to_date(secs + local_offset_secs())
+}
+
+const WEEKDAYS: [&str; 7] = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
+
+/// A calendar day in local time -> its [start, end) in unix seconds.
+/// Accepts `YYYY-MM-DD`, `today`, `yesterday`, or a weekday name (`friday`,
+/// `fri`), meaning the most recent such day, today included.
+pub fn parse_day(s: &str, now: i64, offset: i64) -> Option<(i64, i64)> {
+    let s = s.trim().to_lowercase();
+    let today = (now + offset).div_euclid(86_400);
+    let day = match s.as_str() {
+        "today" => today,
+        "yesterday" => today - 1,
+        _ if s.len() >= 3 && s.chars().all(|c| c.is_ascii_alphabetic()) => {
+            let want = WEEKDAYS.iter().position(|w| w.starts_with(&s) && (s.len() == 3 || *w == s))? as i64;
+            // Day 0 (1970-01-01) was a Thursday: Monday-based index 3.
+            let dow = (today + 3).rem_euclid(7);
+            today - (dow - want).rem_euclid(7)
+        }
+        _ => {
+            if s.len() != 10 {
+                return None;
+            }
+            let start = iso_to_unix(&s)?;
+            let day = start.div_euclid(86_400);
+            // Reject 2026-02-31 and friends: the date must round-trip.
+            if unix_to_date(start) != s {
+                return None;
+            }
+            day
+        }
+    };
+    let start = day * 86_400 - offset;
+    Some((start, start + 86_400))
+}
+
 const MONTHS: [&str; 12] = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
 
 /// Parse RSS-style dates: `Fri, 14 Nov 2026 10:00:00 +0000`.
@@ -189,6 +244,29 @@ mod tests {
         assert_eq!(rfc2822_to_unix("Thu, 01 Jan 1970 00:00:00 +0000"), Some(0));
         assert_eq!(rfc2822_to_unix("Thu, 01 Jan 1970 02:00:00 +0100"), Some(3600));
         assert_eq!(rfc2822_to_unix("1 Jan 1970 00:01 GMT"), Some(60));
+    }
+
+    #[test]
+    fn days() {
+        // Sunday 2026-11-15 13:00 in UTC-6 (19:00 UTC).
+        let now = iso_to_unix("2026-11-15T19:00:00Z").unwrap();
+        let cst = -6 * 3600;
+        let fri = iso_to_unix("2026-11-13T06:00:00Z").unwrap();
+        assert_eq!(parse_day("2026-11-13", now, cst), Some((fri, fri + 86_400)));
+        assert_eq!(parse_day("friday", now, cst), Some((fri, fri + 86_400)));
+        assert_eq!(parse_day("Fri", now, cst), Some((fri, fri + 86_400)));
+        let sun = fri + 2 * 86_400;
+        assert_eq!(parse_day("sunday", now, cst), Some((sun, sun + 86_400)));
+        assert_eq!(parse_day("today", now, cst), Some((sun, sun + 86_400)));
+        assert_eq!(parse_day("yesterday", now, cst), Some((sun - 86_400, sun)));
+        assert_eq!(parse_day("monday", now, cst).map(|w| w.0), Some(fri - 4 * 86_400));
+        // 01:00 UTC Monday is still Sunday evening in UTC-6.
+        let late = iso_to_unix("2026-11-16T01:00:00Z").unwrap();
+        assert_eq!(parse_day("today", late, cst), Some((sun, sun + 86_400)));
+        assert_eq!(parse_day("2026-02-31", now, 0), None);
+        assert_eq!(parse_day("fr", now, 0), None);
+        assert_eq!(parse_day("fridays", now, 0), None);
+        assert_eq!(parse_day("soon", now, 0), None);
     }
 
     #[test]

@@ -78,10 +78,16 @@ Useful flags: `--source NAME` (repeatable), `--remote`, `--limit N`, `--json`,
 jobscout search --since 24h                 # everything posted in the last day
 jobscout search --since 24h -s companies    # only your tracked companies, last day
 jobscout run --since 3d                     # new postings from the last 3 days
+jobscout search --on friday                 # posted on the most recent Friday
+jobscout search --on 2026-11-13 -n 500      # posted on that day (local time)
+jobscout search --on yesterday -s companies # your tracked companies, yesterday
 ```
 
-`--since` applies to every source, tracked companies included, and leaves out
-postings that carry no date.
+`--since` and `--on` apply to every source, tracked companies included, and
+replace `max_age_days` for that call. Postings that carry no date are left out.
+`--on` takes `YYYY-MM-DD`, `today`, `yesterday` or a weekday name (`friday`,
+`fri`: the most recent one, today included), read in your Mac's time zone.
+Over MCP the same filters are `posted_within_hours` and `posted_on`.
 
 ### Config
 

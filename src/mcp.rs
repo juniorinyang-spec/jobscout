@@ -9,6 +9,7 @@
 use crate::bundle;
 use crate::config::Config;
 use crate::json::Json;
+use crate::time;
 use crate::scout::{self, AddOutcome, Phrases};
 use std::fs;
 use std::io::{self, BufRead, Write};
@@ -194,6 +195,19 @@ fn since_arg(args: &Json) -> Option<u64> {
     args.num_of("posted_within_hours").filter(|h| *h > 0.0).map(|h| (h * 3600.0).round() as u64)
 }
 
+const ON_DESC: &str = "Only postings published on this calendar day in the user's local time: 'YYYY-MM-DD', 'today', 'yesterday', or a weekday name ('friday' = the most recent Friday, today included). Applies to tracked companies too; undated postings are left out.";
+
+/// `posted_on` -> local day window; Err for an unreadable value.
+fn on_arg(args: &Json) -> Result<Option<(i64, i64)>, String> {
+    let v = args.str_of("posted_on");
+    if v.trim().is_empty() {
+        return Ok(None);
+    }
+    time::parse_day(&v, time::now_unix(), time::local_offset_secs())
+        .map(Some)
+        .ok_or_else(|| format!("posted_on: cannot read '{}' (use YYYY-MM-DD, today, yesterday or a weekday)", v))
+}
+
 fn tools_list() -> Json {
     let tools = vec![
         tool(
@@ -204,6 +218,7 @@ fn tools_list() -> Json {
                 p("remote_only", "boolean", "Only remote postings."),
                 p("max_age_days", "integer", "Ignore job-board postings older than this many days (default from config, usually 14; 0 = no limit). Tracked companies' open roles are never age-filtered."),
                 p("posted_within_hours", "number", SINCE_DESC),
+                p("posted_on", "string", ON_DESC),
                 p("sources", "string[]", SOURCES_DESC),
                 p("limit", "integer", "Maximum postings to return (default 25)."),
                 p("format", "string", "'text' (default) or 'json' for structured records."),
@@ -215,6 +230,7 @@ fn tools_list() -> Json {
             &[
                 p("dry_run", "boolean", "Preview without writing a bundle or updating memory (default false)."),
                 p("posted_within_hours", "number", SINCE_DESC),
+                p("posted_on", "string", ON_DESC),
                 p("sources", "string[]", SOURCES_DESC),
                 p("limit", "integer", "Maximum postings to return; with dry_run false only these are remembered."),
             ],
@@ -299,6 +315,7 @@ fn run_tool(name: &str, args: &Json) -> Result<String, String> {
                 cfg.max_age_days = d as u64;
             }
             cfg.since_secs = since_arg(args);
+            cfg.on_day = on_arg(args)?;
             let only = args.strings_of("sources");
             let limit = int_arg(args, "limit").unwrap_or(25).max(1);
             let jobs = scout::search(&cfg, &only, limit, true)?;
@@ -314,6 +331,7 @@ fn run_tool(name: &str, args: &Json) -> Result<String, String> {
             let only = args.strings_of("sources");
             let dry = args.bool_of("dry_run").unwrap_or(false);
             cfg.since_secs = since_arg(args);
+            cfg.on_day = on_arg(args)?;
             let out = scout::run(&cfg, &only, int_arg(args, "limit"), dry, true)?;
             let mut text = format!(
                 "{} fetched, {} matched the queries ({}), {}{}.\n",
