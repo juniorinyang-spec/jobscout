@@ -1,13 +1,9 @@
-# Homebrew formula for jobscout.
+# Homebrew formula for jobscout. The repo itself is the tap:
+#   brew tap juniorinyang-spec/jobscout https://github.com/juniorinyang-spec/jobscout
+#   brew install juniorinyang-spec/jobscout/jobscout
 #
-# Publish it from a tap repository named `homebrew-tap` (this file at
-# `Formula/jobscout.rb`), then users run:
-#   brew tap juniorinyang-spec/tap
-#   brew install jobscout
-#
-# For a tagged release: update `url`, then `sha256` with
-#   curl -sL <url> | shasum -a 256
-# Until then `brew install --HEAD jobscout` builds from the main branch.
+# On each release, update `url` and `sha256` (the CI create-release job
+# prints both). `brew install --HEAD ...` builds from the main branch.
 class Jobscout < Formula
   desc "Zero-dependency job posting scout that bundles new listings into digests"
   homepage "https://github.com/juniorinyang-spec/jobscout"

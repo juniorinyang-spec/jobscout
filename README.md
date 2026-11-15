@@ -22,17 +22,27 @@ bundle written: ~/.jobscout/bundles/2026-11-15_10-30-00.md
 
 ## Install
 
-With Homebrew, from your own tap (see *Publishing to Homebrew* below):
+**Homebrew** (macOS or Linux). The repo doubles as a tap:
 
 ```sh
-brew tap juniorinyang-spec/tap
-brew install jobscout
+brew tap juniorinyang-spec/jobscout https://github.com/juniorinyang-spec/jobscout
+brew install juniorinyang-spec/jobscout/jobscout        # latest release
+brew install --HEAD juniorinyang-spec/jobscout/jobscout # or straight from main
 ```
 
-From source (needs a Rust toolchain from <https://rustup.rs>):
+**Prebuilt binary**, no toolchain needed. Each release on the
+[Releases page](https://github.com/juniorinyang-spec/jobscout/releases) has
+tarballs for macOS (Apple Silicon and Intel) and Linux (x64 and arm64):
 
 ```sh
-cargo install --path .
+curl -L https://github.com/juniorinyang-spec/jobscout/releases/latest/download/jobscout-v0.1.0-aarch64-apple-darwin.tar.gz | tar xz
+sudo mv jobscout-v0.1.0-aarch64-apple-darwin/jobscout /usr/local/bin/
+```
+
+**With Rust** (<https://rustup.rs>):
+
+```sh
+cargo install --git https://github.com/juniorinyang-spec/jobscout --locked
 ```
 
 The only runtime requirement is `curl`, which macOS ships with.
@@ -162,17 +172,14 @@ and one line in `sources::all()`.
   binary. It is a single function, easy to swap later.
 - `src/store.rs`: memory of seen postings, written atomically.
 
-## Publishing to Homebrew
+## Releasing
 
-1. Push this repo to GitHub and tag a release: `git tag v0.1.0 && git push --tags`.
-2. Create a repo named `homebrew-tap` and copy `Formula/jobscout.rb` into
-   `Formula/` there.
-3. Fill in `url` (the tag tarball) and `sha256`
-   (`curl -sL <url> | shasum -a 256`); the CI workflow prints both on tag push.
-4. `brew tap juniorinyang-spec/tap && brew install jobscout`.
-
-Before any release exists, `brew install --HEAD juniorinyang-spec/tap/jobscout`
-builds straight from `main`.
+1. Bump `version` in `Cargo.toml`, commit, then `git tag vX.Y.Z && git push --tags`.
+2. CI creates the GitHub release and attaches binaries for four targets. Its
+   `create-release` job log prints the `url` and `sha256` lines for the
+   formula.
+3. Paste those into `Formula/jobscout.rb` and push to `main`; `brew upgrade`
+   picks it up.
 
 ## Development
 

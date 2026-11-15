@@ -18,14 +18,58 @@ jobs:
       - run: cargo test --locked
       - run: ./target/release/jobscout --version
 
-  # On a tag push, print the sha256 Homebrew needs for the release tarball.
-  formula-sha:
+  # ---- releases: on a v* tag, build binaries and attach them to a GitHub release
+
+  create-release:
     if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
     needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
-      - run: |
-          TAG="${GITHUB_REF_NAME}"
-          URL="https://github.com/${GITHUB_REPOSITORY}/archive/refs/tags/${TAG}.tar.gz"
+      - uses: actions/checkout@v4
+      - name: Create the release if it does not exist
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || \
+            gh release create "$GITHUB_REF_NAME" --title "jobscout $GITHUB_REF_NAME" --generate-notes
+      - name: Print the Homebrew formula fields for this tag
+        run: |
+          URL="https://github.com/${GITHUB_REPOSITORY}/archive/refs/tags/${GITHUB_REF_NAME}.tar.gz"
           echo "url \"${URL}\""
           echo "sha256 \"$(curl -sL "${URL}" | sha256sum | cut -d' ' -f1)\""
+
+  build-binaries:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: create-release
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: macos-latest
+            target: x86_64-apple-darwin
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup update stable && rustup default stable && rustup target add ${{ matrix.target }}
+      - run: cargo build --release --locked --target ${{ matrix.target }}
+      - name: Package
+        run: |
+          NAME="jobscout-${GITHUB_REF_NAME}-${{ matrix.target }}"
+          mkdir -p "dist/${NAME}"
+          cp "target/${{ matrix.target }}/release/jobscout" README.md LICENSE "dist/${NAME}/"
+          tar -C dist -czf "dist/${NAME}.tar.gz" "${NAME}"
+          (cd dist && shasum -a 256 "${NAME}.tar.gz" > "${NAME}.tar.gz.sha256")
+      - name: Upload to the release
+        run: gh release upload "$GITHUB_REF_NAME" dist/*.tar.gz dist/*.sha256 --clobber
