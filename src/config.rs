@@ -4,7 +4,7 @@ use crate::json::Json;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-pub const ALL_SOURCES: [&str; 6] = ["remoteok", "remotive", "arbeitnow", "weworkremotely", "hackernews", "companies"];
+pub const ALL_SOURCES: [&str; 5] = ["remoteok", "remotive", "arbeitnow", "weworkremotely", "companies"];
 
 /// A company whose careers page is hosted on a known applicant tracking
 /// system (ATS). `ats` is one of `sources::companies::ATS`.

@@ -130,15 +130,6 @@ fn looks_like_markup(s: &str) -> bool {
         && (s.contains("</") || s.contains("/>") || s.contains("<p") || s.contains("<br"))
 }
 
-/// HTML -> plain text, preserving line breaks (used for HN comments).
-pub fn text_lines(s: &str) -> String {
-    decode_entities(&strip_tags(s))
-        .lines()
-        .map(|l| collapse_ws(l))
-        .filter(|l| !l.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n")
-}
 
 /// Truncate to at most `max` chars, adding an ellipsis.
 pub fn truncate(s: &str, max: usize) -> String {

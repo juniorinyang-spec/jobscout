@@ -16,7 +16,7 @@ use std::io::{self, BufRead, Write};
 
 const PROTOCOL_VERSIONS: [&str; 3] = ["2025-06-18", "2025-03-26", "2024-11-05"];
 
-const INSTRUCTIONS: &str = "jobscout finds job postings across public boards (RemoteOK, Remotive, Arbeitnow, We Work Remotely, Hacker News hiring thread) and any company the user tracks. \
+const INSTRUCTIONS: &str = "jobscout finds job postings across public boards (RemoteOK, Remotive, Arbeitnow, We Work Remotely) and any company the user tracks. \
 Use `new_jobs` for the user's digest of postings not shown before (it remembers what it returned). \
 Use `search_jobs` for ad-hoc questions; it never affects memory. \
 `add_company` accepts a company name or careers URL. Queries are whole-word matches; all words of a query must appear.";
@@ -186,7 +186,7 @@ fn tool(name: &str, desc: &str, props: &[Prop]) -> Json {
     obj(vec![("name", s(name)), ("description", s(desc)), ("inputSchema", schema(props))])
 }
 
-const SOURCES_DESC: &str = "Restrict to these sources: remoteok, remotive, arbeitnow, weworkremotely, hackernews, companies. Default: all enabled.";
+const SOURCES_DESC: &str = "Restrict to these sources: remoteok, remotive, arbeitnow, weworkremotely, companies. Default: all enabled.";
 
 const SINCE_DESC: &str = "Only postings published within this many hours (e.g. 24 for 'today', 168 for 'this week'). Unlike max_age_days this also applies to tracked companies; postings without a date are left out.";
 

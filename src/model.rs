@@ -150,8 +150,8 @@ mod tests {
 
     #[test]
     fn url_identity_keeps_ids() {
-        assert_eq!(url_identity("https://news.ycombinator.com/item?id=1"), "news.ycombinator.com/item?id=1");
-        assert_ne!(url_identity("https://news.ycombinator.com/item?id=1"), url_identity("https://news.ycombinator.com/item?id=2"));
+        assert_eq!(url_identity("https://example.com/jobs/view?id=1"), "example.com/jobs/view?id=1");
+        assert_ne!(url_identity("https://example.com/jobs/view?id=1"), url_identity("https://example.com/jobs/view?id=2"));
         assert_eq!(url_identity("HTTP://www.Example.com/a/?utm_source=x#top"), "example.com/a");
     }
 

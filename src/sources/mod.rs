@@ -6,7 +6,6 @@ use crate::model::Job;
 
 pub mod arbeitnow;
 pub mod companies;
-pub mod hackernews;
 pub mod remoteok;
 pub mod remotive;
 pub mod weworkremotely;
@@ -31,7 +30,6 @@ pub fn all() -> Vec<Box<dyn Source>> {
         Box::new(remotive::Remotive),
         Box::new(arbeitnow::Arbeitnow),
         Box::new(weworkremotely::WeWorkRemotely),
-        Box::new(hackernews::HackerNews),
         Box::new(companies::Companies),
     ]
 }

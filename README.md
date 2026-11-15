@@ -11,13 +11,13 @@ $ jobscout run
   remotive        31 postings
   arbeitnow       472 postings
   weworkremotely  100 postings
-  hackernews      244 postings
-[hackernews] Senior Rust Engineer
+  companies       120 postings
+[greenhouse] Senior Rust Engineer
     Acme · Remote (US) · remote · 2026-11-14
-    https://news.ycombinator.com/item?id=...
+    https://boards.greenhouse.io/acme/jobs/...
 ...
 bundle written: ~/.jobscout/bundles/2026-11-15_10-30-00.md
-944 fetched, 23 matched, 23 new
+820 fetched, 23 matched, 23 new
 ```
 
 ## Install
@@ -105,7 +105,6 @@ Over MCP the same filters are `posted_within_hours` and `posted_on`.
     "remotive": true,
     "arbeitnow": true,
     "weworkremotely": true,
-    "hackernews": true,
     "companies": true
   },
   "companies": [
@@ -187,7 +186,6 @@ Each `run` with new postings writes two files into `~/.jobscout/bundles/`:
 | `remotive`       | remotive.com API, searched per query                     |
 | `arbeitnow`      | arbeitnow.com API (Europe-heavy, remote + on-site)       |
 | `weworkremotely` | weworkremotely.com RSS                                   |
-| `hackernews`     | the monthly "Ask HN: Who is hiring?" thread via Algolia  |
 | `companies`      | companies you track, on Greenhouse, Lever, Ashby, Workable or SmartRecruiters |
 
 Adding a board is one file in `src/sources/` implementing the `Source` trait
