@@ -16,7 +16,8 @@ use std::io::{self, BufRead, Write};
 
 const PROTOCOL_VERSIONS: [&str; 3] = ["2025-06-18", "2025-03-26", "2024-11-05"];
 
-const INSTRUCTIONS: &str = "jobscout finds job postings across public boards (RemoteOK, Remotive, Arbeitnow, We Work Remotely) and any company the user tracks. \
+const INSTRUCTIONS: &str = "jobscout finds job postings at the companies the user tracks (the main source) and, if the user turned them on, public boards (RemoteOK, Remotive, Arbeitnow, We Work Remotely). \
+The user's location (get_config, set_location) hides postings located elsewhere; remote postings open to that country and postings with an unclear location are kept. \
 Use `new_jobs` for the user's digest of postings not shown before (it remembers what it returned). \
 Use `search_jobs` for ad-hoc questions; it never affects memory. \
 `add_company` accepts a company name or careers URL. Queries are whole-word matches; all words of a query must appear.";
@@ -208,6 +209,23 @@ fn on_arg(args: &Json) -> Result<Option<(i64, i64)>, String> {
         .ok_or_else(|| format!("posted_on: cannot read '{}' (use YYYY-MM-DD, today, yesterday or a weekday)", v))
 }
 
+const LOCATION_DESC: &str = "Country to search from for this call only, e.g. 'United States' or 'Germany'; 'anywhere' turns the location filter off. Default: the user's saved location.";
+
+/// `location` argument -> Some(country code or "" for anywhere), None when absent.
+fn location_arg(args: &Json) -> Result<Option<String>, String> {
+    let v = args.str_of("location");
+    let v = v.trim();
+    if v.is_empty() {
+        return Ok(None);
+    }
+    if v.eq_ignore_ascii_case("anywhere") {
+        return Ok(Some(String::new()));
+    }
+    crate::location::resolve_country(v)
+        .map(|c| Some(c.to_string()))
+        .ok_or_else(|| format!("location: cannot tell which country '{}' is", v))
+}
+
 fn tools_list() -> Json {
     let tools = vec![
         tool(
@@ -219,6 +237,7 @@ fn tools_list() -> Json {
                 p("max_age_days", "integer", "Ignore job-board postings older than this many days (default from config, usually 14; 0 = no limit). Tracked companies' open roles are never age-filtered."),
                 p("posted_within_hours", "number", SINCE_DESC),
                 p("posted_on", "string", ON_DESC),
+                p("location", "string", LOCATION_DESC),
                 p("sources", "string[]", SOURCES_DESC),
                 p("limit", "integer", "Maximum postings to return (default 25)."),
                 p("format", "string", "'text' (default) or 'json' for structured records."),
@@ -231,6 +250,7 @@ fn tools_list() -> Json {
                 p("dry_run", "boolean", "Preview without writing a bundle or updating memory (default false)."),
                 p("posted_within_hours", "number", SINCE_DESC),
                 p("posted_on", "string", ON_DESC),
+                p("location", "string", LOCATION_DESC),
                 p("sources", "string[]", SOURCES_DESC),
                 p("limit", "integer", "Maximum postings to return; with dry_run false only these are remembered."),
             ],
@@ -252,6 +272,19 @@ fn tools_list() -> Json {
             &[req("phrase", "string", "Phrase to exclude, e.g. 'staff' or 'go to market'.")],
         ),
         tool("remove_exclude", "Remove an exclude phrase.", &[req("phrase", "string", "Exact phrase to remove.")]),
+        tool(
+            "set_location",
+            "Save the country the user searches from (e.g. 'United States'). Postings located elsewhere are then hidden; remote postings open to that country stay. 'anywhere' clears it.",
+            &[req("place", "string", "Country name, or a city/state inside it, or 'anywhere'.")],
+        ),
+        tool(
+            "set_source",
+            "Turn a job board on or off. Boards are off by default; tracked companies ('companies') are the main source.",
+            &[
+                req("name", "string", "One of: remoteok, remotive, arbeitnow, weworkremotely, companies."),
+                req("enabled", "boolean", "true to turn it on, false to turn it off."),
+            ],
+        ),
         tool("list_bundles", "List digests written by previous runs, newest first.", &[p("limit", "integer", "Maximum entries (default 10).")]),
         tool("get_bundle", "Read one digest (Markdown).", &[req("name", "string", "Bundle name from list_bundles, e.g. 2026-11-15_09-00-00.")]),
         tool("get_config", "Show the active configuration: queries, excludes, filters, sources, companies and file paths.", &[]),
@@ -283,6 +316,8 @@ fn tools_call(params: &Json) -> Result<Json, (i64, String)> {
         "list_excludes",
         "add_exclude",
         "remove_exclude",
+        "set_location",
+        "set_source",
         "list_bundles",
         "get_bundle",
         "get_config",
@@ -316,6 +351,9 @@ fn run_tool(name: &str, args: &Json) -> Result<String, String> {
             }
             cfg.since_secs = since_arg(args);
             cfg.on_day = on_arg(args)?;
+            if let Some(l) = location_arg(args)? {
+                cfg.location = l;
+            }
             let only = args.strings_of("sources");
             let limit = int_arg(args, "limit").unwrap_or(25).max(1);
             let jobs = scout::search(&cfg, &only, limit, true)?;
@@ -332,6 +370,9 @@ fn run_tool(name: &str, args: &Json) -> Result<String, String> {
             let dry = args.bool_of("dry_run").unwrap_or(false);
             cfg.since_secs = since_arg(args);
             cfg.on_day = on_arg(args)?;
+            if let Some(l) = location_arg(args)? {
+                cfg.location = l;
+            }
             let out = scout::run(&cfg, &only, int_arg(args, "limit"), dry, true)?;
             let mut text = format!(
                 "{} fetched, {} matched the queries ({}), {}{}.\n",
@@ -394,6 +435,26 @@ fn run_tool(name: &str, args: &Json) -> Result<String, String> {
             } else {
                 Err(format!("No such {}: {}", noun, q.trim()))
             }
+        }
+        "set_location" => {
+            let place = args.str_of("place");
+            let code = match location_arg(&obj(vec![("location", Json::Str(place.clone()))]))? {
+                Some(c) => c,
+                None => return Err("place is required (a country, or 'anywhere')".into()),
+            };
+            cfg.location = code;
+            cfg.save()?;
+            Ok(if cfg.location.is_empty() {
+                "Location cleared: searching anywhere.".to_string()
+            } else {
+                format!("Location set to {} ({}). Postings located elsewhere are hidden; remote ones open to it stay.", crate::location::country_name(&cfg.location), cfg.location)
+            })
+        }
+        "set_source" => {
+            let n = args.str_of("name");
+            let on = args.bool_of("enabled").ok_or("enabled (true/false) is required")?;
+            scout::set_source(&mut cfg, n.trim(), on)?;
+            Ok(format!("{} is now {}.", n.trim(), if on { "on" } else { "off" }))
         }
         "list_excludes" => Ok(if cfg.exclude.is_empty() { "No exclude phrases configured.".to_string() } else { cfg.exclude.join("\n") }),
         "list_bundles" => {

@@ -10,6 +10,7 @@ mod filter;
 mod html;
 mod http;
 mod json;
+mod location;
 mod mcp;
 mod model;
 mod scout;
@@ -52,6 +53,11 @@ COMMANDS
   exclude add WORDS    Drop postings containing this phrase (e.g. 'go to market')
   exclude remove WORDS Remove an exclude phrase
   exclude list         Show exclude phrases
+  location set PLACE   Search from this country, e.g. \"United States\"; hides
+                       jobs located elsewhere (remote jobs open to it stay)
+  location clear       Search anywhere
+  source on|off NAME   Turn a job board on or off (see `jobscout sources`);
+                       boards are off by default, tracked companies are on
   config               Show the active config and paths
   forget               Clear the memory of seen postings
   help, version
@@ -65,6 +71,8 @@ OPTIONS
                        companies included; undated postings are left out
       --on DAY         Only postings from that local calendar day: 2026-11-13,
                        today, yesterday, or a weekday (friday = the latest one)
+      --location PLACE Use this country for one search/run
+      --anywhere       Ignore the location setting for one search/run
       --every DUR      watch interval: 90s, 30m, 2h, 1d
       --dry-run        run: print new postings but write nothing
       --json           Print postings as JSON instead of text
@@ -83,6 +91,8 @@ struct Args {
     every: Option<u64>,
     since: Option<u64>,
     on: Option<(i64, i64)>,
+    /// --location X (resolved country code) or --anywhere (Some("")).
+    location: Option<String>,
     json: bool,
     dry_run: bool,
     remote: bool,
@@ -117,6 +127,11 @@ fn parse_args() -> Result<Args, String> {
                         .ok_or_else(|| format!("bad date '{}' (try 2026-11-13, yesterday, friday)", v))?,
                 );
             }
+            "--location" => {
+                let v = value(arg)?;
+                a.location = Some(resolve_place(&v)?);
+            }
+            "--anywhere" => a.location = Some(String::new()),
             "--json" => a.json = true,
             "--dry-run" | "--dry" => a.dry_run = true,
             "-r" | "--remote" => a.remote = true,
@@ -165,6 +180,8 @@ fn run() -> Result<(), String> {
         "query" | "queries" => cmd_phrases(&a, Phrases::Queries, "query"),
         "exclude" | "excludes" => cmd_phrases(&a, Phrases::Exclude, "exclude"),
         "forget" => cmd_forget(),
+        "location" => cmd_location(&a),
+        "source" => cmd_source(&a),
         other => Err(format!("unknown command '{}' (see `jobscout help`)", other)),
     }
 }
@@ -179,7 +196,13 @@ fn cmd_init() -> Result<(), String> {
     }
     let path = cfg.save()?;
     println!("wrote {}", path.display());
-    println!("edit it to set your queries, then run `jobscout run`.");
+    println!();
+    println!("next steps:");
+    println!("  jobscout location set \"United States\"   # where you can work from");
+    println!("  jobscout company add stripe              # companies to watch (name or careers URL)");
+    println!("  jobscout query add data engineer         # what to look for");
+    println!("  jobscout run                             # new postings, saved as a digest");
+    println!("job boards are off; add one with `jobscout source on remoteok` (see `jobscout sources`).");
     Ok(())
 }
 
@@ -188,6 +211,7 @@ fn cmd_config() -> Result<(), String> {
     println!("config:  {}{}", cfg.config_path().display(), if cfg.config_path().exists() { "" } else { "  (not written yet; showing defaults)" });
     println!("seen:    {}", cfg.seen_path().display());
     println!("bundles: {}", cfg.bundles_dir().display());
+    println!("location: {}", describe_location(&cfg.location));
     println!();
     print!("{}", cfg.to_json().to_pretty());
     Ok(())
@@ -216,6 +240,9 @@ fn cmd_search(a: &Args) -> Result<(), String> {
     }
     cfg.since_secs = a.since;
     cfg.on_day = a.on;
+    if let Some(l) = &a.location {
+        cfg.location = l.clone();
+    }
     if !a.words.is_empty() {
         cfg.queries = vec![a.words.join(" ")];
     }
@@ -234,6 +261,9 @@ fn cmd_run(a: &Args) -> Result<(), String> {
     }
     cfg.since_secs = a.since;
     cfg.on_day = a.on;
+    if let Some(l) = &a.location {
+        cfg.location = l.clone();
+    }
     let out = scout::run(&cfg, &a.sources, a.limit, a.dry_run, a.quiet)?;
     output(&out.new, a.json);
     if let Some(b) = &out.bundle {
@@ -369,6 +399,73 @@ fn cmd_phrases(a: &Args, which: Phrases, noun: &str) -> Result<(), String> {
             }
         }
         other => Err(format!("unknown subcommand '{} {}' (add, list, remove)", noun, other)),
+    }
+}
+
+/// A place the user typed -> country code; "anywhere" -> "".
+fn resolve_place(place: &str) -> Result<String, String> {
+    let p = place.trim();
+    if p.is_empty() || p.eq_ignore_ascii_case("anywhere") || p.eq_ignore_ascii_case("none") {
+        return Ok(String::new());
+    }
+    location::resolve_country(p)
+        .map(|c| c.to_string())
+        .ok_or_else(|| format!("cannot tell which country '{}' is; try a country name like \"United States\" or \"Germany\"", p))
+}
+
+fn describe_location(code: &str) -> String {
+    if code.is_empty() {
+        "anywhere (no location filter)".into()
+    } else {
+        format!("{} ({}): jobs there, plus remote jobs open to it; postings with an unclear location are kept", location::country_name(code), code)
+    }
+}
+
+fn cmd_location(a: &Args) -> Result<(), String> {
+    let mut cfg = Config::load()?;
+    let sub = a.words.first().map(|s| s.as_str()).unwrap_or("show");
+    match sub {
+        "show" => {
+            println!("{}", describe_location(&cfg.location));
+            Ok(())
+        }
+        "set" => {
+            let place = a.words[1..].join(" ");
+            if place.trim().is_empty() {
+                return Err("usage: jobscout location set <country>   e.g. jobscout location set \"United States\"".into());
+            }
+            cfg.location = resolve_place(&place)?;
+            cfg.save()?;
+            println!("location: {}", describe_location(&cfg.location));
+            Ok(())
+        }
+        "clear" | "anywhere" => {
+            cfg.location.clear();
+            cfg.save()?;
+            println!("location: {}", describe_location(&cfg.location));
+            Ok(())
+        }
+        other => Err(format!("unknown subcommand 'location {}' (show, set, clear)", other)),
+    }
+}
+
+fn cmd_source(a: &Args) -> Result<(), String> {
+    let sub = a.words.first().map(|s| s.as_str()).unwrap_or("list");
+    match sub {
+        "list" | "ls" => cmd_sources(),
+        "on" | "off" => {
+            let names = &a.words[1..];
+            if names.is_empty() {
+                return Err(format!("usage: jobscout source {} <name>...   (see `jobscout sources`)", sub));
+            }
+            let mut cfg = Config::load()?;
+            for n in names {
+                scout::set_source(&mut cfg, n, sub == "on")?;
+                println!("{} {}", n, sub);
+            }
+            Ok(())
+        }
+        other => Err(format!("unknown subcommand 'source {}' (list, on, off)", other)),
     }
 }
 

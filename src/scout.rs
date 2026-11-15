@@ -76,7 +76,7 @@ pub fn collect(cfg: &Config, only: &[String], quiet: bool) -> Result<Vec<Job>, S
         }
     }
     if used == 0 {
-        return Err("no sources enabled; edit config or pass --source".into());
+        return Err("nothing to search yet: track a company with `jobscout company add <name or careers url>`, or turn on a job board with `jobscout source on remoteok`".into());
     }
     if failures == used {
         return Err("every source failed; check your network connection".into());
@@ -185,6 +185,21 @@ pub fn remove_company(cfg: &mut Config, target: &str) -> Result<bool, String> {
         cfg.save()?;
     }
     Ok(removed)
+}
+
+/// Turn a source on or off in the config.
+pub fn set_source(cfg: &mut Config, name: &str, on: bool) -> Result<(), String> {
+    let all = sources::all();
+    if !all.iter().any(|s| s.name() == name) {
+        let names: Vec<&str> = all.iter().map(|s| s.name()).collect();
+        return Err(format!("unknown source '{}' (one of: {})", name, names.join(", ")));
+    }
+    cfg.sources.retain(|s| s != name);
+    if on {
+        cfg.sources.push(name.to_string());
+    }
+    cfg.save()?;
+    Ok(())
 }
 
 /// Which phrase list of the config to edit.

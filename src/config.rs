@@ -48,6 +48,9 @@ pub struct Config {
     pub sources: Vec<String>,
     pub companies: Vec<Company>,
     pub max_per_source: usize,
+    /// Country code the user searches from ("US"), or "" for anywhere.
+    /// Postings clearly located elsewhere are hidden; unclear ones are kept.
+    pub location: String,
     /// Per-invocation window (`--since 24h`, MCP `posted_within_hours`):
     /// keep only postings dated within this many seconds, tracked companies
     /// included. Never saved to the config file.
@@ -88,9 +91,12 @@ impl Config {
             exclude: vec![],
             remote_only: false,
             max_age_days: 14,
-            sources: ALL_SOURCES.iter().map(|s| s.to_string()).collect(),
+            // Tracked companies are the main place to search; the public
+            // boards are opt-in (`jobscout source on remoteok`).
+            sources: vec!["companies".into()],
             companies: vec![],
             max_per_source: 500,
+            location: String::new(),
             since_secs: None,
             on_day: None,
         }
@@ -137,6 +143,10 @@ impl Config {
             sources,
             companies,
             max_per_source: v.num_of("max_per_source").map(|n| n.max(1.0) as usize).unwrap_or(d.max_per_source),
+            location: {
+                let l = v.str_of("location");
+                crate::location::resolve_country(&l).map(|c| c.to_string()).unwrap_or_default()
+            },
             since_secs: None,
             on_day: None,
         }
@@ -150,6 +160,7 @@ impl Config {
         let mut o = Json::obj();
         o.set("queries", Json::str_arr(&self.queries));
         o.set("exclude", Json::str_arr(&self.exclude));
+        o.set("location", Json::Str(self.location.clone()));
         o.set("remote_only", Json::Bool(self.remote_only));
         o.set("max_age_days", Json::Num(self.max_age_days as f64));
         o.set("max_per_source", Json::Num(self.max_per_source as f64));
@@ -179,5 +190,17 @@ mod tests {
         assert!(cfg.companies.iter().any(|c| c.ats == "greenhouse" && c.slug == "stripe"));
         let again = Config::from_json(PathBuf::from("/tmp/x"), &cfg.to_json());
         assert_eq!(again.companies, cfg.companies);
+    }
+
+    #[test]
+    fn location_and_default_sources() {
+        let d = Config::defaults(PathBuf::from("/tmp/x"));
+        assert_eq!(d.sources, vec!["companies".to_string()]);
+        assert_eq!(d.location, "");
+        let v = Json::parse(r#"{"location":"United States"}"#).unwrap();
+        let cfg = Config::from_json(PathBuf::from("/tmp/x"), &v);
+        assert_eq!(cfg.location, "US");
+        let again = Config::from_json(PathBuf::from("/tmp/x"), &cfg.to_json());
+        assert_eq!(again.location, "US");
     }
 }

@@ -1,23 +1,24 @@
 # jobscout
 
-A small command-line agent that watches job boards for new postings, filters
-them against your keywords, and bundles the new ones into Markdown + JSON
-digests. Written in Rust with **zero third-party crates**: the JSON parser,
-HTML/RSS extraction, date handling, config and storage are all in this repo.
+A small command-line agent that watches the careers pages of companies you
+choose for new postings, filters them by your keywords and location, and
+bundles the new ones into Markdown + JSON digests. Public job boards can be
+switched on too. Written in Rust with **zero third-party crates**: the JSON
+parser, HTML/RSS extraction, date handling, config and storage are all in this
+repo.
 
 ```
 $ jobscout run
-  remoteok        97 postings
-  remotive        31 postings
-  arbeitnow       472 postings
-  weworkremotely  100 postings
-  companies       120 postings
-[greenhouse] Senior Rust Engineer
-    Acme · Remote (US) · remote · 2026-11-14
-    https://boards.greenhouse.io/acme/jobs/...
+  companies       412 postings
+[greenhouse] Senior Backend Engineer, Payments
+    stripe · New York, NY · 2026-11-14
+    https://stripe.com/jobs/search?gh_jid=...
+[lever] Machine Learning Engineer
+    spotify · New York, NY · 2026-11-13
+    https://jobs.lever.co/spotify/...
 ...
 bundle written: ~/.jobscout/bundles/2026-11-15_10-30-00.md
-820 fetched, 23 matched, 23 new
+412 fetched, 18 matched, 18 new
 ```
 
 ## Install
@@ -57,17 +58,19 @@ The only runtime requirement is `curl`, which macOS ships with.
 
 ```sh
 jobscout init                 # writes ~/.jobscout/config.json
-jobscout query add rust       # what to look for (repeat for more)
+jobscout location set "United States"   # where you can work from
 jobscout company add stripe   # track a company; its ATS is auto-detected
 jobscout company add https://jobs.lever.co/spotify https://jobs.ashbyhq.com/linear
+jobscout query add rust       # what to look for (repeat for more)
 jobscout exclude add go to market  # drop postings containing a phrase
+jobscout source on remoteok   # optionally add a public job board (off by default)
 
 jobscout search rust backend  # one-off search, ignores memory
 jobscout run                  # new postings only; writes a bundle; remembers them
 jobscout run --dry-run        # preview without saving anything
 jobscout watch --every 1h     # keep running
 jobscout bundles              # list digests written so far
-jobscout sources              # list boards and whether they are enabled
+jobscout sources              # list sources and whether they are on
 jobscout forget               # clear memory of seen postings
 ```
 
@@ -97,14 +100,15 @@ Over MCP the same filters are `posted_within_hours` and `posted_on`.
 {
   "queries": ["rust", "backend engineer", "typescript react"],
   "exclude": ["staff", "principal"],
+  "location": "US",
   "remote_only": false,
   "max_age_days": 14,
   "max_per_source": 500,
   "sources": {
-    "remoteok": true,
-    "remotive": true,
-    "arbeitnow": true,
-    "weworkremotely": true,
+    "remoteok": false,
+    "remotive": false,
+    "arbeitnow": false,
+    "weworkremotely": false,
     "companies": true
   },
   "companies": [
@@ -114,6 +118,15 @@ Over MCP the same filters are `posted_within_hours` and `posted_on`.
 }
 ```
 
+- `location` is the country you search from (`jobscout location set
+  "United States"`, or a state/city inside it). Postings located clearly
+  elsewhere are hidden: on-site/hybrid jobs in other countries, and remote jobs
+  limited to other regions ("EMEA Only", "Remote - Europe"). Remote jobs open
+  to your country ("USA Only", "Americas", "Worldwide") stay, and so do
+  postings whose location is blank or unclear, so a real match is not lost.
+  `--location Germany` or `--anywhere` overrides it for one search or run.
+- Tracked companies are the main source. The public boards are off unless you
+  turn them on with `jobscout source on <name>`.
 - A posting matches if **any** query matches. A query matches when **all** of
   its words appear as whole words somewhere in the title, company, location,
   tags, salary or summary (`rust` does not match `trust`).
@@ -167,7 +180,8 @@ mentions Rust?"* or *"start tracking Home Depot and Nike"*.
 
 Tools exposed: `search_jobs`, `new_jobs`, `list_companies`, `add_company`,
 `remove_company`, `list_queries`, `add_query`, `remove_query`,
-`list_excludes`, `add_exclude`, `remove_exclude`, `list_bundles`,
+`list_excludes`, `add_exclude`, `remove_exclude`, `set_location`,
+`set_source`, `list_bundles`,
 `get_bundle`, `get_config`. Bundles and the config are also exposed as MCP
 resources (`jobscout://bundle/<name>`, `jobscout://config`).
 
@@ -179,6 +193,8 @@ Each `run` with new postings writes two files into `~/.jobscout/bundles/`:
 - `<timestamp>.json`, the same postings as structured data for other tools.
 
 ### Sources
+
+Only `companies` is on by default; turn boards on with `jobscout source on NAME`.
 
 | name             | what                                                     |
 |------------------|----------------------------------------------------------|

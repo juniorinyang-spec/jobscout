@@ -1,6 +1,7 @@
 //! Keyword / recency / remote filtering.
 
 use crate::config::Config;
+use crate::location::{self, Fit};
 use crate::model::Job;
 
 #[derive(Debug, Clone)]
@@ -14,6 +15,8 @@ pub struct Filter {
     pub since_secs: Option<u64>,
     /// Explicit calendar day [start, end); same rules as `since_secs`.
     pub on_day: Option<(i64, i64)>,
+    /// User's country code; postings clearly elsewhere are dropped.
+    pub country: Option<String>,
 }
 
 impl Filter {
@@ -25,12 +28,34 @@ impl Filter {
             max_age_days: cfg.max_age_days,
             since_secs: cfg.since_secs,
             on_day: cfg.on_day,
+            country: if cfg.location.is_empty() { None } else { Some(cfg.location.clone()) },
         }
     }
 
     pub fn keep(&self, job: &Job, now: i64) -> bool {
         if self.remote_only && !job.remote {
             return false;
+        }
+        if let Some(c) = &self.country {
+            // The location field decides; when it names nothing we know,
+            // the title may ("Account Executive, EMEA"). Unclear = keep.
+            let fit = match location::fit(&job.location, c) {
+                Fit::Unknown => location::fit(&job.title, c),
+                f => f,
+            };
+            // arbeitnow only lists jobs in Europe: an unrecognised town there
+            // ("Magdeburg") is in Europe, and "Darmstadt, DE" is not Delaware.
+            let fit = if job.source == "arbeitnow" {
+                match location::fit_regional(&job.location, c, location::EUROPE_REGION) {
+                    Fit::Open if fit != Fit::Elsewhere => Fit::Open,
+                    _ => Fit::Elsewhere,
+                }
+            } else {
+                fit
+            };
+            if fit == Fit::Elsewhere {
+                return false;
+            }
         }
         if let Some(win) = self.since_secs {
             match job.posted_unix {
@@ -114,7 +139,28 @@ mod tests {
             max_age_days: 7,
             since_secs: None,
             on_day: None,
+            country: None,
         }
+    }
+
+    #[test]
+    fn location_filter() {
+        let mut f = filter(&[], &[]);
+        f.country = Some("US".into());
+        let at = |title: &str, loc: &str| {
+            let mut j = job(title, false, 1);
+            j.location = loc.into();
+            j
+        };
+        assert!(f.keep(&at("Engineer", "Austin, TX"), 1_000_000));
+        assert!(f.keep(&at("Engineer", "USA Only"), 1_000_000));
+        assert!(f.keep(&at("Engineer", "Remote"), 1_000_000));
+        assert!(f.keep(&at("Engineer", ""), 1_000_000));
+        assert!(!f.keep(&at("Engineer", "Berlin"), 1_000_000));
+        assert!(!f.keep(&at("Engineer", "EMEA Only"), 1_000_000));
+        assert!(!f.keep(&at("Account Executive, EMEA", "Remote"), 1_000_000));
+        f.country = None;
+        assert!(f.keep(&at("Engineer", "Berlin"), 1_000_000));
     }
 
     #[test]
