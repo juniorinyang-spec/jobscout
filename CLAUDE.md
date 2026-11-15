@@ -26,6 +26,9 @@ Desktop can.
   release into `${CLAUDE_PLUGIN_DATA}`, plus the `jobscout` skill). Check it
   with `claude plugin validate ./plugins/jobscout` and `claude plugin
   validate .`.
+- `plugins/jobscout-cli/`: a skill-only plugin (no scripts, no server) for
+  Anthropic's directory, which allows local MCP servers only for Verified
+  organizations. The skill drives the `jobscout` CLI through Bash.
 - `mcpb/build.sh`: builds the Claude Desktop extension.
 - `Formula/jobscout.rb`: Homebrew (this repo is the tap).
 
@@ -51,9 +54,10 @@ Desktop can.
 
 ## Releasing
 
-1. Bump the version in three places: `Cargo.toml` (then `cargo build` to
-   update `Cargo.lock`), `plugins/jobscout/.claude-plugin/plugin.json`, and
-   `VERSION=` in `plugins/jobscout/scripts/jobscout-mcp`. CI fails if they
+1. Bump the version in four places: `Cargo.toml` (then `cargo build` to
+   update `Cargo.lock`), `plugins/jobscout/.claude-plugin/plugin.json`,
+   `plugins/jobscout-cli/.claude-plugin/plugin.json`, and `VERSION=` in
+   `plugins/jobscout/scripts/jobscout-mcp`. CI fails if they
    disagree, or if `plugins/jobscout/scripts/install.sh` differs from
    `install.sh` (copy it after editing). Commit, `git tag -a vX.Y.Z -m
    "jobscout vX.Y.Z"`, push branch and tag.

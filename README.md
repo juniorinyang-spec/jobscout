@@ -232,6 +232,12 @@ claude plugin install jobscout@jobscout
 
 Start a new session, then ask *"set up jobscout for me"*.
 
+**Skill only** (`jobscout-cli`): a lighter plugin with no tool server. Its
+skill teaches Claude to install (with your OK) and run the `jobscout` command
+line in the terminal. It suits Cowork and setups that don't allow plugin
+tool servers:
+`/plugin install jobscout-cli --marketplace juniorinyang-spec/jobscout`.
+
 **Claude Desktop extension (macOS).** Download `jobscout.mcpb` from the
 [latest release](https://github.com/juniorinyang-spec/jobscout/releases/latest)
 and open it; Claude Desktop shows an install dialog. It contains a universal
@@ -319,8 +325,9 @@ and one line in `sources::all()`.
 ## Releasing
 
 1. Bump the version in `Cargo.toml` (then `cargo build` so `Cargo.lock`
-   follows), `plugins/jobscout/.claude-plugin/plugin.json`, and `VERSION=` in
-   `plugins/jobscout/scripts/jobscout-mcp`; CI checks they agree. Commit,
+   follows), both `plugins/*/.claude-plugin/plugin.json` files, and
+   `VERSION=` in `plugins/jobscout/scripts/jobscout-mcp`; CI checks they
+   agree. Commit,
    then `git tag -a vX.Y.Z -m "jobscout vX.Y.Z"` and push the branch and the
    tag.
 2. CI creates the GitHub release, attaches binaries for four targets, and

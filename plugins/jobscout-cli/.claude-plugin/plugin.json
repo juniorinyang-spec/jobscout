@@ -1,0 +1,15 @@
+{
+  "name": "jobscout-cli",
+  "displayName": "jobscout",
+  "version": "0.1.10",
+  "description": "Find new job postings at the companies you choose, straight from their hiring systems, filtered by keywords, location and date. Claude drives the open-source jobscout command line for you.",
+  "author": {
+    "name": "juniorinyang-spec",
+    "url": "https://github.com/juniorinyang-spec"
+  },
+  "homepage": "https://github.com/juniorinyang-spec/jobscout",
+  "repository": "https://github.com/juniorinyang-spec/jobscout",
+  "license": "MIT",
+  "keywords": ["jobs", "careers", "job-search"],
+  "icon": "./.claude-plugin/icon.png"
+}

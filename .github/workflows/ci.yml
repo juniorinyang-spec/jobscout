@@ -21,6 +21,7 @@ jobs:
         run: |
           v=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
           grep -q "\"version\": \"$v\"" plugins/jobscout/.claude-plugin/plugin.json || { echo "plugin.json version != $v"; exit 1; }
+          grep -q "\"version\": \"$v\"" plugins/jobscout-cli/.claude-plugin/plugin.json || { echo "jobscout-cli plugin.json version != $v"; exit 1; }
           grep -q "^VERSION=\"$v\"" plugins/jobscout/scripts/jobscout-mcp || { echo "jobscout-mcp VERSION != $v"; exit 1; }
           cmp install.sh plugins/jobscout/scripts/install.sh || { echo "plugins/jobscout/scripts/install.sh differs from install.sh"; exit 1; }
 

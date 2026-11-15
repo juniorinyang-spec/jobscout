@@ -10,6 +10,11 @@
       "name": "jobscout",
       "source": "./plugins/jobscout",
       "description": "Search and track job postings at companies you choose, filtered by keywords, location and date, as Claude tools"
+    },
+    {
+      "name": "jobscout-cli",
+      "source": "./plugins/jobscout-cli",
+      "description": "Skill only: Claude installs and drives the jobscout command line through the terminal (no tool server)"
     }
   ]
 }

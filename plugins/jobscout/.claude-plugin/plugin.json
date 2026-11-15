@@ -10,5 +10,11 @@
   "homepage": "https://github.com/juniorinyang-spec/jobscout",
   "repository": "https://github.com/juniorinyang-spec/jobscout",
   "license": "MIT",
-  "keywords": ["jobs", "careers", "job-search", "mcp"]
+  "keywords": [
+    "jobs",
+    "careers",
+    "job-search",
+    "mcp"
+  ],
+  "icon": "./.claude-plugin/icon.png"
 }
