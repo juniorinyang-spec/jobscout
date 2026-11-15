@@ -10,7 +10,7 @@
 # stdout belongs to the MCP protocol: everything else goes to stderr.
 set -eu
 
-VERSION="0.1.9"
+VERSION="0.1.10"
 
 here=$(cd "$(dirname "$0")" && pwd)
 data="${CLAUDE_PLUGIN_DATA:-$HOME/.local/share/jobscout-plugin}"

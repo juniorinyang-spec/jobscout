@@ -32,7 +32,7 @@ curl -fsSL https://raw.githubusercontent.com/juniorinyang-spec/jobscout/main/ins
 ```
 
 Set `JOBSCOUT_INSTALL_DIR=/some/dir` to choose the directory, or
-`JOBSCOUT_VERSION=v0.1.9` to pin a release. Run it again to upgrade.
+`JOBSCOUT_VERSION=v0.1.10` to pin a release. Run it again to upgrade.
 
 **Homebrew** (macOS or Linux). The repo doubles as a tap; the formula builds
 from source, so Homebrew installs Rust for the build:

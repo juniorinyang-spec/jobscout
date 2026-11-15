@@ -1,7 +1,7 @@
 {
   "name": "jobscout",
   "displayName": "jobscout",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "description": "Find new job postings at the companies you choose (Greenhouse, Lever, Ashby, Workday, Phenom, TikTok and any careers site with schema.org job data), filtered by keywords, location and date.",
   "author": {
     "name": "juniorinyang-spec",

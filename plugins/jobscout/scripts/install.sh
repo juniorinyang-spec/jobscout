@@ -6,7 +6,7 @@
 # Picks the right build for this machine (macOS or Linux, Apple Silicon/arm64
 # or Intel/x64), verifies its SHA-256 checksum, and installs it into the first
 # writable directory of: $JOBSCOUT_INSTALL_DIR, /usr/local/bin, ~/.local/bin.
-# Set JOBSCOUT_VERSION=v0.1.9 to install a specific release.
+# Set JOBSCOUT_VERSION=v0.1.10 to install a specific release.
 set -eu
 
 REPO="juniorinyang-spec/jobscout"
