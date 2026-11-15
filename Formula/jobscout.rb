@@ -21,7 +21,8 @@ class Jobscout < Formula
   end
 
   test do
-    assert_match "jobscout #{version}", shell_output("#{bin}/jobscout --version")
+    # Not "jobscout #{version}": for --HEAD installs version is "HEAD-<sha>".
+    assert_match(/^jobscout \d+\.\d+\.\d+/, shell_output("#{bin}/jobscout --version"))
     assert_match "remoteok", shell_output("#{bin}/jobscout sources")
   end
 end

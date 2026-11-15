@@ -35,9 +35,15 @@ brew install --HEAD juniorinyang-spec/jobscout/jobscout # or straight from main
 tarballs for macOS (Apple Silicon and Intel) and Linux (x64 and arm64):
 
 ```sh
-curl -L https://github.com/juniorinyang-spec/jobscout/releases/latest/download/jobscout-v0.1.0-aarch64-apple-darwin.tar.gz | tar xz
-sudo mv jobscout-v0.1.0-aarch64-apple-darwin/jobscout /usr/local/bin/
+# pick one: aarch64-apple-darwin (Apple Silicon), x86_64-apple-darwin (Intel),
+#           x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu
+T=aarch64-apple-darwin
+curl -fL https://github.com/juniorinyang-spec/jobscout/releases/latest/download/jobscout-$T.tar.gz | tar xz
+sudo mkdir -p /usr/local/bin && sudo mv jobscout-$T/jobscout /usr/local/bin/
+jobscout --version
 ```
+
+Linux binaries need glibc 2.35 or newer (Ubuntu 22.04, Debian 12, RHEL 9).
 
 **With Rust** (<https://rustup.rs>):
 

@@ -56,17 +56,22 @@ jobs:
             target: aarch64-apple-darwin
           - os: macos-latest
             target: x86_64-apple-darwin
-          - os: ubuntu-latest
+          # Build Linux on the oldest supported Ubuntu: the binary needs the
+          # glibc it was linked against or newer (22.04 -> glibc 2.35, so it
+          # also runs on Debian 12, RHEL 9, Ubuntu 22.04+).
+          - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
-          - os: ubuntu-24.04-arm
+          - os: ubuntu-22.04-arm
             target: aarch64-unknown-linux-gnu
     steps:
       - uses: actions/checkout@v4
       - run: rustup update stable && rustup default stable && rustup target add ${{ matrix.target }}
       - run: cargo build --release --locked --target ${{ matrix.target }}
       - name: Package
+        # No version in the asset name, so .../releases/latest/download/<name>
+        # in the README keeps pointing at the newest release.
         run: |
-          NAME="jobscout-${GITHUB_REF_NAME}-${{ matrix.target }}"
+          NAME="jobscout-${{ matrix.target }}"
           mkdir -p "dist/${NAME}"
           cp "target/${{ matrix.target }}/release/jobscout" README.md LICENSE "dist/${NAME}/"
           tar -C dist -czf "dist/${NAME}.tar.gz" "${NAME}"
