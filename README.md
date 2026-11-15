@@ -100,6 +100,37 @@ Useful flags: `--source NAME` (repeatable), `--remote`, `--limit N`, `--json`.
   - Sites behind bot protection (a Cloudflare "Just a moment" page, HTTP 403
     for non-browsers) cannot be read; `company add` says so.
 
+### Use it from Claude (MCP)
+
+`jobscout mcp` serves the same engine as an [MCP](https://modelcontextprotocol.io)
+tool server over stdio, so Claude Desktop, Claude Code, Cursor and other MCP
+clients can call it. No extra dependencies; the JSON-RPC layer is in-house.
+
+Claude Code:
+
+```sh
+claude mcp add jobscout -- jobscout mcp
+```
+
+Claude Desktop (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "jobscout": { "command": "/opt/homebrew/bin/jobscout", "args": ["mcp"] }
+  }
+}
+```
+
+Use the absolute path from `which jobscout`; GUI apps don't share your shell's
+`PATH`. Then ask Claude things like *"anything new at Stripe or Linear that
+mentions Rust?"* or *"start tracking Home Depot and Nike"*.
+
+Tools exposed: `search_jobs`, `new_jobs`, `list_companies`, `add_company`,
+`remove_company`, `list_queries`, `add_query`, `remove_query`, `list_bundles`,
+`get_bundle`, `get_config`. Bundles and the config are also exposed as MCP
+resources (`jobscout://bundle/<name>`, `jobscout://config`).
+
 ### Bundles
 
 Each `run` with new postings writes two files into `~/.jobscout/bundles/`:

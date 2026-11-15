@@ -1,8 +1,8 @@
 //! jobscout: a zero-dependency job posting scout.
 //!
-//! Polls public job boards, filters postings against your keywords, remembers
-//! what it has already shown you, and bundles the new ones into Markdown +
-//! JSON digests.
+//! Polls public job boards and tracked companies, filters postings against
+//! your keywords, remembers what it has already shown you, and bundles the
+//! new ones into Markdown + JSON digests. Also serves as an MCP tool server.
 
 mod bundle;
 mod config;
@@ -10,16 +10,17 @@ mod filter;
 mod html;
 mod http;
 mod json;
+mod mcp;
 mod model;
+mod scout;
 mod sources;
 mod store;
 mod time;
 
 use config::Config;
-use filter::Filter;
 use json::Json;
 use model::Job;
-use std::collections::HashSet;
+use scout::AddOutcome;
 use std::process::exit;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -35,10 +36,13 @@ COMMANDS
   search [words...]    One-off search; words override the configured queries
   run                  Fetch, filter, bundle NEW postings, remember them
   watch                Run repeatedly (default every 30m) until stopped
+  mcp                  Serve as an MCP tool server on stdio (Claude Desktop,
+                       Claude Code, Cursor...). See README for setup.
   bundles              List bundles written so far
   sources              List available job boards
   company add X...     Track a company by name or careers URL (ATS auto-detected:
-                       Greenhouse, Lever, Ashby, Workable, SmartRecruiters)
+                       Greenhouse, Lever, Ashby, Workable, SmartRecruiters,
+                       Phenom sites, Workday boards)
   company list         Show tracked companies
   company remove X     Stop tracking a company
   query add WORDS      Add a search query (all words must appear)
@@ -132,8 +136,9 @@ fn run() -> Result<(), String> {
         "config" => cmd_config(),
         "sources" => cmd_sources(),
         "search" => cmd_search(&a),
-        "run" => cmd_run(&a).map(|_| ()),
+        "run" => cmd_run(&a),
         "watch" => cmd_watch(&a),
+        "mcp" => mcp::serve(),
         "bundles" => cmd_bundles(),
         "company" | "companies" => cmd_company(&a),
         "query" | "queries" => cmd_query(&a),
@@ -182,129 +187,15 @@ fn cmd_sources() -> Result<(), String> {
     Ok(())
 }
 
-fn cmd_company(a: &Args) -> Result<(), String> {
-    let mut cfg = Config::load()?;
-    let sub = a.words.first().map(|s| s.as_str()).unwrap_or("list");
-    let rest = &a.words[a.words.len().min(1)..];
-    match sub {
-        "list" | "ls" => {
-            if cfg.companies.is_empty() {
-                println!("no companies tracked yet. Add one with `jobscout company add <name or careers url>`.");
-            }
-            for c in &cfg.companies {
-                println!("{:<20} {:<16} {}", c.name, c.ats, c.slug);
-            }
-            Ok(())
-        }
-        "add" => {
-            if rest.is_empty() {
-                return Err("usage: jobscout company add <name or careers url> [...]".into());
-            }
-            if !http::curl_available() {
-                return Err("`curl` was not found on PATH; jobscout uses it for HTTPS".into());
-            }
-            let mut failures = 0;
-            for input in rest {
-                match sources::companies::detect(input) {
-                    Ok((c, count)) => {
-                        if let Some(existing) = cfg.companies.iter().find(|x| x.ats == c.ats && x.slug == c.slug) {
-                            println!("{:<20} already tracked as {} ({})", existing.name, existing.ats, existing.slug);
-                            continue;
-                        }
-                        println!("{:<20} -> {} '{}', {} open role{}", c.name, c.ats, c.slug, count, if count == 1 { "" } else { "s" });
-                        cfg.companies.push(c);
-                    }
-                    Err(e) => {
-                        failures += 1;
-                        eprintln!("{}: {}", input, e);
-                    }
-                }
-            }
-            if !cfg.source_enabled("companies") {
-                cfg.sources.push("companies".into());
-            }
-            cfg.save()?;
-            if failures > 0 {
-                Err(format!("{} compan{} could not be added", failures, if failures == 1 { "y" } else { "ies" }))
-            } else {
-                Ok(())
-            }
-        }
-        "remove" | "rm" => {
-            if rest.is_empty() {
-                return Err("usage: jobscout company remove <name or slug>".into());
-            }
-            for target in rest {
-                let t = target.to_lowercase();
-                let before = cfg.companies.len();
-                cfg.companies.retain(|c| c.name.to_lowercase() != t && c.slug.to_lowercase() != t);
-                if cfg.companies.len() == before {
-                    eprintln!("{}: not tracked", target);
-                } else {
-                    println!("removed {}", target);
-                }
-            }
-            cfg.save()?;
-            Ok(())
-        }
-        other => Err(format!("unknown subcommand 'company {}' (add, list, remove)", other)),
-    }
-}
-
-fn cmd_query(a: &Args) -> Result<(), String> {
-    let mut cfg = Config::load()?;
-    let sub = a.words.first().map(|s| s.as_str()).unwrap_or("list");
-    let phrase = a.words[a.words.len().min(1)..].join(" ").trim().to_string();
-    match sub {
-        "list" | "ls" => {
-            for q in &cfg.queries {
-                println!("{}", q);
-            }
-            Ok(())
-        }
-        "add" => {
-            if phrase.is_empty() {
-                return Err("usage: jobscout query add <words>".into());
-            }
-            if cfg.queries.iter().any(|q| q.eq_ignore_ascii_case(&phrase)) {
-                println!("already present: {}", phrase);
-            } else {
-                cfg.queries.push(phrase.clone());
-                cfg.save()?;
-                println!("added: {}", phrase);
-            }
-            Ok(())
-        }
-        "remove" | "rm" => {
-            let before = cfg.queries.len();
-            cfg.queries.retain(|q| !q.eq_ignore_ascii_case(&phrase));
-            if cfg.queries.len() == before {
-                return Err(format!("no such query: {}", phrase));
-            }
-            cfg.save()?;
-            println!("removed: {}", phrase);
-            Ok(())
-        }
-        other => Err(format!("unknown subcommand 'query {}' (add, list, remove)", other)),
-    }
-}
-
 fn cmd_search(a: &Args) -> Result<(), String> {
     let mut cfg = Config::load()?;
     if a.remote {
         cfg.remote_only = true;
     }
     if !a.words.is_empty() {
-        // Words given on the command line form one query; Remotive uses them server-side too.
         cfg.queries = vec![a.words.join(" ")];
     }
-    let filt = Filter::from_config(&cfg);
-    let now = time::now_unix();
-    let mut jobs = collect(&cfg, &a.sources, a.quiet)?;
-    jobs.retain(|j| filt.keep(j, now));
-    sort_newest_first(&mut jobs);
-    let limit = a.limit.unwrap_or(50);
-    let shown: Vec<Job> = jobs.into_iter().take(limit).collect();
+    let shown = scout::search(&cfg, &a.sources, a.limit.unwrap_or(50), a.quiet)?;
     output(&shown, a.json);
     if !a.json {
         eprintln!("{} matching posting{} shown", shown.len(), if shown.len() == 1 { "" } else { "s" });
@@ -312,45 +203,24 @@ fn cmd_search(a: &Args) -> Result<(), String> {
     Ok(())
 }
 
-fn cmd_run(a: &Args) -> Result<usize, String> {
+fn cmd_run(a: &Args) -> Result<(), String> {
     let mut cfg = Config::load()?;
     if a.remote {
         cfg.remote_only = true;
     }
-    let filt = Filter::from_config(&cfg);
-    let now = time::now_unix();
-    let mut seen = store::Seen::load(&cfg.seen_path())?;
-
-    let mut jobs = collect(&cfg, &a.sources, a.quiet)?;
-    let fetched = jobs.len();
-    jobs.retain(|j| filt.keep(j, now));
-    let matching = jobs.len();
-    jobs.retain(|j| !seen.contains(&j.key()));
-    sort_newest_first(&mut jobs);
-    if let Some(n) = a.limit {
-        jobs.truncate(n);
-    }
-
-    output(&jobs, a.json);
-
-    let stamp = time::now_stamp();
-    let generated = time::now_iso();
-    if !jobs.is_empty() && !a.dry_run {
-        let (md, _) = bundle::write(&cfg.bundles_dir(), &stamp, &generated, &jobs)?;
-        for j in &jobs {
-            seen.mark(&j.key(), &generated);
-        }
-        seen.save()?;
-        eprintln!("bundle written: {}", md.display());
+    let out = scout::run(&cfg, &a.sources, a.limit, a.dry_run, a.quiet)?;
+    output(&out.new, a.json);
+    if let Some(b) = &out.bundle {
+        eprintln!("bundle written: {}", b.display());
     }
     eprintln!(
         "{} fetched, {} matched, {} new{}",
-        fetched,
-        matching,
-        jobs.len(),
-        if a.dry_run { " (dry run, nothing saved)" } else { "" }
+        out.fetched,
+        out.matched,
+        out.new.len(),
+        if out.dry_run { " (dry run, nothing saved)" } else { "" }
     );
-    Ok(jobs.len())
+    Ok(())
 }
 
 fn cmd_watch(a: &Args) -> Result<(), String> {
@@ -379,6 +249,89 @@ fn cmd_bundles() -> Result<(), String> {
     Ok(())
 }
 
+fn cmd_company(a: &Args) -> Result<(), String> {
+    let mut cfg = Config::load()?;
+    let sub = a.words.first().map(|s| s.as_str()).unwrap_or("list");
+    let rest = &a.words[a.words.len().min(1)..];
+    match sub {
+        "list" | "ls" => {
+            if cfg.companies.is_empty() {
+                println!("no companies tracked yet. Add one with `jobscout company add <name or careers url>`.");
+            }
+            for c in &cfg.companies {
+                println!("{:<20} {:<16} {}", c.name, c.ats, c.slug);
+            }
+            Ok(())
+        }
+        "add" => {
+            if rest.is_empty() {
+                return Err("usage: jobscout company add <name or careers url> [...]".into());
+            }
+            let mut failures = 0;
+            for input in rest {
+                match scout::add_company(&mut cfg, input) {
+                    Ok(AddOutcome::Added(c, n)) => println!("{:<20} -> {} '{}', {} open role{}", c.name, c.ats, c.slug, n, if n == 1 { "" } else { "s" }),
+                    Ok(AddOutcome::AlreadyTracked(c)) => println!("{:<20} already tracked as {} ({})", c.name, c.ats, c.slug),
+                    Err(e) => {
+                        failures += 1;
+                        eprintln!("{}: {}", input, e);
+                    }
+                }
+            }
+            if failures > 0 {
+                Err(format!("{} compan{} could not be added", failures, if failures == 1 { "y" } else { "ies" }))
+            } else {
+                Ok(())
+            }
+        }
+        "remove" | "rm" => {
+            if rest.is_empty() {
+                return Err("usage: jobscout company remove <name or slug>".into());
+            }
+            for target in rest {
+                if scout::remove_company(&mut cfg, target)? {
+                    println!("removed {}", target);
+                } else {
+                    eprintln!("{}: not tracked", target);
+                }
+            }
+            Ok(())
+        }
+        other => Err(format!("unknown subcommand 'company {}' (add, list, remove)", other)),
+    }
+}
+
+fn cmd_query(a: &Args) -> Result<(), String> {
+    let mut cfg = Config::load()?;
+    let sub = a.words.first().map(|s| s.as_str()).unwrap_or("list");
+    let phrase = a.words[a.words.len().min(1)..].join(" ").trim().to_string();
+    match sub {
+        "list" | "ls" => {
+            for q in &cfg.queries {
+                println!("{}", q);
+            }
+            Ok(())
+        }
+        "add" => {
+            if scout::add_query(&mut cfg, &phrase)? {
+                println!("added: {}", phrase);
+            } else {
+                println!("already present: {}", phrase);
+            }
+            Ok(())
+        }
+        "remove" | "rm" => {
+            if scout::remove_query(&mut cfg, &phrase)? {
+                println!("removed: {}", phrase);
+                Ok(())
+            } else {
+                Err(format!("no such query: {}", phrase))
+            }
+        }
+        other => Err(format!("unknown subcommand 'query {}' (add, list, remove)", other)),
+    }
+}
+
 fn cmd_forget() -> Result<(), String> {
     let cfg = Config::load()?;
     let mut seen = store::Seen::load(&cfg.seen_path())?;
@@ -390,77 +343,6 @@ fn cmd_forget() -> Result<(), String> {
 }
 
 // ------------------------------------------------------------------ helpers
-
-/// Fetch from every enabled (or explicitly requested) source, de-duplicated.
-fn collect(cfg: &Config, only: &[String], quiet: bool) -> Result<Vec<Job>, String> {
-    if !http::curl_available() {
-        return Err("`curl` was not found on PATH; jobscout uses it for HTTPS".into());
-    }
-    let all = sources::all();
-    for name in only {
-        if !all.iter().any(|s| s.name() == name) {
-            return Err(format!("unknown source '{}' (see `jobscout sources`)", name));
-        }
-    }
-
-    let mut jobs: Vec<Job> = Vec::new();
-    let mut keys: HashSet<String> = HashSet::new();
-    let mut urls: HashSet<String> = HashSet::new();
-    let mut failures = 0;
-    let mut used = 0;
-
-    for src in &all {
-        let wanted = if only.is_empty() { cfg.source_enabled(src.name()) } else { only.iter().any(|n| n == src.name()) };
-        if !wanted {
-            continue;
-        }
-        if let Some(why) = src.unconfigured(cfg) {
-            if !quiet || !only.is_empty() {
-                eprintln!("  {:<15} skipped ({})", src.name(), why);
-            }
-            continue;
-        }
-        used += 1;
-        if !quiet {
-            eprint!("  {:<15} ", src.name());
-        }
-        match src.fetch(cfg) {
-            Ok(found) => {
-                let mut added = 0;
-                for j in found {
-                    let uid = model::url_identity(&j.url);
-                    if !keys.insert(j.key()) || (!uid.is_empty() && !urls.insert(uid)) {
-                        continue;
-                    }
-                    jobs.push(j);
-                    added += 1;
-                }
-                if !quiet {
-                    eprintln!("{} postings", added);
-                }
-            }
-            Err(e) => {
-                failures += 1;
-                if !quiet {
-                    eprintln!("FAILED: {}", e);
-                } else {
-                    eprintln!("  {}: {}", src.name(), e);
-                }
-            }
-        }
-    }
-    if used == 0 {
-        return Err("no sources enabled; edit config or pass --source".into());
-    }
-    if failures == used {
-        return Err("every source failed; check your network connection".into());
-    }
-    Ok(jobs)
-}
-
-fn sort_newest_first(jobs: &mut [Job]) {
-    jobs.sort_by(|a, b| b.posted_unix.unwrap_or(i64::MIN).cmp(&a.posted_unix.unwrap_or(i64::MIN)).then_with(|| a.title.cmp(&b.title)));
-}
 
 fn output(jobs: &[Job], as_json: bool) {
     if as_json {
